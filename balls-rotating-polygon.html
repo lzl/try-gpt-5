@@ -230,6 +230,13 @@
           </span>
         </div>
 
+        <div class="row">
+          <span class="switch">
+            <input id="ballCollisions" type="checkbox" checked />
+            <label for="ballCollisions">Ball collisions</label>
+          </span>
+        </div>
+
         <div class="btns">
           <button id="reset">Reset</button>
           <button id="randomize">Randomize</button>
@@ -269,6 +276,7 @@
           randomize: document.getElementById('randomize'),
           export: document.getElementById('export'),
           kpi: document.getElementById('kpi'),
+          ballCollisions: document.getElementById('ballCollisions'),
         };
 
         const state = {
@@ -302,6 +310,7 @@
             ballCount: Number(controls.count.value),
             subSteps: 2,
             airDrag: 0.0,
+            ballCollisions: true,
           },
         };
 
@@ -424,7 +433,8 @@
             const v = { x: Math.cos(dir) * speed, y: Math.sin(dir) * speed };
             const hue = (Math.random() * 360);
             const color = hsvToRgb(hue, 0.75, 1.0);
-            balls.push({ p, v, r, color });
+            const m = r * r * r; // mass proportional to volume
+            balls.push({ p, v, r, color, m });
           }
           // If we couldn't place all without overlap, fill rest anyway
           while (balls.length < count) {
@@ -437,7 +447,8 @@
             const v = { x: Math.cos(dir) * speed, y: Math.sin(dir) * speed };
             const hue = (Math.random() * 360);
             const color = hsvToRgb(hue, 0.75, 1.0);
-            balls.push({ p, v, r, color });
+            const m = r * r * r; // mass proportional to volume
+            balls.push({ p, v, r, color, m });
           }
           return balls;
         }
@@ -458,6 +469,7 @@
           s.bgColor = controls.bgColor.value;
           s.showPolygonFill = controls.showPolygonFill.checked;
           s.ballCount = Number(controls.count.value);
+          s.ballCollisions = controls.ballCollisions.checked;
           state.paused = controls.pause.checked;
           updatePolygonRadiusPx();
           state.omega = (s.rotationSpeedDeg * Math.PI / 180);
@@ -494,6 +506,9 @@
 
             for (let i = 0; i < state.balls.length; i++) {
               const b = state.balls[i];
+
+              // ensure mass exists (backward safety if balls created before mass was added)
+              if (b.m == null) b.m = b.r * b.r * b.r;
 
               // integrate
               b.v.x += gravity.x * h;
@@ -538,6 +553,65 @@
                       // back to world velocity
                       b.v.x = vrel.x + vwall.x;
                       b.v.y = vrel.y + vwall.y;
+                    }
+                  }
+                }
+              }
+            }
+
+            // ball-ball collisions (toggleable)
+            if (s.ballCollisions) {
+              const balls = state.balls;
+              for (let i = 0; i < balls.length; i++) {
+                for (let j = i + 1; j < balls.length; j++) {
+                  const bi = balls[i];
+                  const bj = balls[j];
+                  const dx = bj.p.x - bi.p.x;
+                  const dy = bj.p.y - bi.p.y;
+                  const rs = bi.r + bj.r;
+                  const distSq = dx * dx + dy * dy;
+                  if (distSq === 0) {
+                    // Rare pathological overlap: nudge in arbitrary direction
+                    const n = { x: 1, y: 0 };
+                    const inv1 = 1 / bi.m;
+                    const inv2 = 1 / bj.m;
+                    const penetration = rs;
+                    const percent = 0.8;
+                    const slop = 0.01;
+                    const corrMag = Math.max(penetration - slop, 0) / (inv1 + inv2) * percent;
+                    const cx = n.x * corrMag;
+                    const cy = n.y * corrMag;
+                    bi.p.x -= cx * inv1; bi.p.y -= cy * inv1;
+                    bj.p.x += cx * inv2; bj.p.y += cy * inv2;
+                    continue;
+                  }
+                  if (distSq < rs * rs) {
+                    const dist = Math.sqrt(distSq);
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    const inv1 = 1 / bi.m;
+                    const inv2 = 1 / bj.m;
+                    // positional correction to resolve penetration
+                    const penetration = rs - dist;
+                    const percent = 0.8; // strong separation to avoid sticking
+                    const slop = 0.01;
+                    const corrMag = Math.max(penetration - slop, 0) / (inv1 + inv2) * percent;
+                    const cx = nx * corrMag;
+                    const cy = ny * corrMag;
+                    bi.p.x -= cx * inv1; bi.p.y -= cy * inv1;
+                    bj.p.x += cx * inv2; bj.p.y += cy * inv2;
+
+                    // relative velocity along normal
+                    const rvx = bj.v.x - bi.v.x;
+                    const rvy = bj.v.y - bi.v.y;
+                    const vrn = rvx * nx + rvy * ny;
+                    if (vrn < 0) {
+                      const e = s.restitution; // reuse bounce for ball-ball
+                      const j = -(1 + e) * vrn / (inv1 + inv2);
+                      const impX = j * nx;
+                      const impY = j * ny;
+                      bi.v.x -= impX * inv1; bi.v.y -= impY * inv1;
+                      bj.v.x += impX * inv2; bj.v.y += impY * inv2;
                     }
                   }
                 }
@@ -623,7 +697,7 @@
           const inputs = [
             controls.sides, controls.rotSpeed, controls.count, controls.gravity, controls.restitution,
             controls.wallFriction, controls.minR, controls.maxR, controls.speed, controls.polyRadius,
-            controls.edgeWidth, controls.trail, controls.bgColor, controls.showPolygonFill, controls.pause
+            controls.edgeWidth, controls.trail, controls.bgColor, controls.showPolygonFill, controls.pause, controls.ballCollisions
           ];
           inputs.forEach(el => {
             el.addEventListener('input', () => {
