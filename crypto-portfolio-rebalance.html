@@ -903,14 +903,46 @@
       });
 
       dom('btnCopyPlan')?.addEventListener('click', async () => {
-        const text = dom('plan').textContent || '';
+        // Assemble copy text: current time + relevant coin prices + plan
+        const planText = dom('plan').textContent || '';
+
+        // Compute aggregates and deltas to find relevant coins
+        const { per, totalUsd } = computeAggregates();
+        const { deltas } = computeDeltas(per, totalUsd);
+
+        // Collect symbols that are relevant to the plan (non-cash coins with deltas)
+        const relevant = new Set(deltas.filter(d => Math.abs(d.deltaUsd) > 1e-6).map(d => d.symbol));
+        // Also include the bridge coin (e.g., USDT/USDC)
+        const bridge = getBridgeCoin(per);
+        if (bridge) relevant.add(bridge);
+
+        // If nothing is relevant (already at target), fallback to all non-cash coins in holdings
+        if (relevant.size === 0) {
+          for (const x of per) { if (!x.isCash) relevant.add(x.symbol); }
+        }
+
+        // Build a price map from current per snapshot (manual price has precedence there)
+        const priceBySymbol = new Map(per.map(x => [x.symbol, x.price]));
+
+        // Compose prices section
+        const symbols = Array.from(relevant).sort();
+        const priceLines = symbols.map(s => {
+          let p = priceBySymbol.get(s);
+          if ((p == null || !isFinite(p)) && s === 'USDT') p = 1;
+          const pv = (p == null || !isFinite(p)) ? '—' : `$${fmt4(p)}`;
+          return `${s} 价格（USDT）：${pv}`;
+        });
+
+        const header = `当前时间：${nowTs()}`;
+        const copyText = [header, priceLines.join('\n'), planText].filter(Boolean).join('\n');
+
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(copyText);
           alert('已复制到剪贴板');
         } catch {
           // Fallback
           const ta = document.createElement('textarea');
-          ta.value = text; document.body.appendChild(ta); ta.select();
+          ta.value = copyText; document.body.appendChild(ta); ta.select();
           document.execCommand('copy');
           ta.remove();
           alert('已复制到剪贴板');
