@@ -293,7 +293,23 @@
       const fmt4 = (n) => isFinite(n) ? Number(n).toFixed(4) : "—";
       const fmt0 = (n) => isFinite(n) ? Number(n).toFixed(0) : "—";
       const pct = (p) => isFinite(p) ? (p * 100).toFixed(2) + "%" : "—";
-      const nowTs = () => new Date().toLocaleString();
+      const nowTs = () => {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        const MM = pad(d.getMonth() + 1);
+        const dd = pad(d.getDate());
+        const hh = pad(d.getHours());
+        const mm = pad(d.getMinutes());
+        const ss = pad(d.getSeconds());
+        const offsetMin = -d.getTimezoneOffset(); // minutes east of UTC
+        const sign = offsetMin >= 0 ? '+' : '-';
+        const abs = Math.abs(offsetMin);
+        const oh = pad(Math.floor(abs / 60));
+        const om = pad(abs % 60);
+        // Example: 2025-01-31 20:15:30 UTC+08:00
+        return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss} UTC${sign}${oh}:${om}`;
+      };
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
