@@ -138,7 +138,7 @@
 
       <div class="card">
         <div class="row">
-          <div class="pill">数据源：Binance 价格，exchangerate.host 汇率</div>
+          <div class="pill">数据源：Binance 价格，open.er-api/jsdelivr/floatrates 汇率</div>
           <div class="pill">货币：USD/USDT，汇率 USD→CNY</div>
           <div class="spacer"></div>
           <label class="row small">
@@ -328,18 +328,48 @@
       }
 
       // =============================
-      // Market Data: Binance + exchangerate.host
+      // Market Data: Binance + public FX (no key)
       // =============================
       async function fetchUsdCny() {
+        const fetchWithTimeout = (url, ms = 8000) => {
+          return Promise.race([
+            fetch(url),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+          ]);
+        };
+
+        // 1) open.er-api
         try {
-          const res = await fetch('https://api.exchangerate.host/latest?base=USD&symbols=CNY');
-          const data = await res.json();
-          const rate = data?.rates?.CNY;
-          return typeof rate === 'number' ? rate : null;
-        } catch (e) {
-          console.warn('fetchUsdCny failed', e);
-          return null;
-        }
+          const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
+          if (res && res.ok) {
+            const data = await res.json();
+            const rate = Number(data?.rates?.CNY);
+            if (isFinite(rate) && rate > 0) return rate;
+          }
+        } catch {}
+
+        // 2) jsdelivr currency-api (fawazahmed0)
+        try {
+          const res = await fetchWithTimeout('https://cdn.jsdelivr.net/gh/fawazahmed0/currency-api@1/latest/currencies/usd/cny.json');
+          if (res && res.ok) {
+            const data = await res.json();
+            const rate = Number(data?.cny);
+            if (isFinite(rate) && rate > 0) return rate;
+          }
+        } catch {}
+
+        // 3) floatrates
+        try {
+          const res = await fetchWithTimeout('https://www.floatrates.com/daily/usd.json');
+          if (res && res.ok) {
+            const data = await res.json();
+            const rate = Number(data?.cny?.rate);
+            if (isFinite(rate) && rate > 0) return rate;
+          }
+        } catch {}
+
+        console.warn('All FX sources failed');
+        return null;
       }
 
       async function fetchTickerPrice(symbol) {
