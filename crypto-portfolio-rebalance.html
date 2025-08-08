@@ -181,13 +181,18 @@
 
         <div class="card">
           <h2>市场与汇率</h2>
+          <div class="row small" style="margin-bottom: 8px;">
+            <label>
+              <input id="toggleSplitTotals" type="checkbox" /> 拆分显示现金/非现金总资产
+            </label>
+          </div>
           <div class="kpi" style="margin-bottom: 10px;">
             <div class="box">
-              <div class="label">总资产 (USD)</div>
+              <div class="label" id="labelUsd">总资产 (USD)</div>
               <div class="value" id="totalUsd">—</div>
             </div>
             <div class="box">
-              <div class="label">总资产 (CNY)</div>
+              <div class="label" id="labelCny">总资产 (CNY)</div>
               <div class="value" id="totalCny">—</div>
             </div>
             <div class="box">
@@ -443,6 +448,7 @@
         prices: {}, // { symbol: number|null }
         usdCny: null,
         algoMode: 'bridge', // 'bridge' | 'optimized'
+        splitTotals: false,
         targets: {
           cashPct: 10, // default 10%
           nonCashWeights: {} // { symbol: pct }
@@ -456,13 +462,15 @@
         if (Array.isArray(saved.holdingsRows)) state.holdingsRows = saved.holdingsRows;
         if (saved.algoMode) state.algoMode = saved.algoMode;
         if (saved.targets) state.targets = saved.targets;
+        if (typeof saved.splitTotals === 'boolean') state.splitTotals = saved.splitTotals;
       }
 
       function persist() {
         saveState({
           holdingsRows: state.holdingsRows,
           algoMode: state.algoMode,
-          targets: state.targets
+          targets: state.targets,
+          splitTotals: state.splitTotals,
         });
       }
 
@@ -605,10 +613,28 @@
         }
       }
 
-      function renderKpis(totalUsd, usdCny, totalCashUsd) {
-        dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt2(totalUsd)}` : '—';
-        const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
-        dom('totalCny').textContent = isFinite(cny) ? `¥${fmt2(cny)}` : '—';
+      function renderKpis(totalUsd, usdCny, totalCashUsd, totalNonCashUsd) {
+        const split = !!state.splitTotals;
+        const labelUsd = dom('labelUsd');
+        const labelCny = dom('labelCny');
+
+        if (!split) {
+          if (labelUsd) labelUsd.textContent = '总资产 (USD)';
+          if (labelCny) labelCny.textContent = '总资产 (CNY)';
+          dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt2(totalUsd)}` : '—';
+          const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
+          dom('totalCny').textContent = isFinite(cny) ? `¥${fmt2(cny)}` : '—';
+        } else {
+          if (labelUsd) labelUsd.textContent = '非现金/现金 (USD)';
+          if (labelCny) labelCny.textContent = '非现金/现金 (CNY)';
+          dom('totalUsd').textContent = `$${fmt2(totalNonCashUsd)} / $${fmt2(totalCashUsd)}`;
+          const cnyNonCash = isFinite(usdCny) ? totalNonCashUsd * usdCny : NaN;
+          const cnyCash = isFinite(usdCny) ? totalCashUsd * usdCny : NaN;
+          dom('totalCny').textContent = (isFinite(cnyNonCash) && isFinite(cnyCash))
+            ? `¥${fmt2(cnyNonCash)} / ¥${fmt2(cnyCash)}`
+            : '—';
+        }
+
         const cashPct = totalUsd > 0 ? totalCashUsd / totalUsd : 0;
         dom('cashPct').textContent = pct(cashPct);
       }
@@ -819,12 +845,14 @@
         renderHoldingsTable();
         renderTargetsTable(aggregated);
         renderTargetSum();
+        const splitToggle = dom('toggleSplitTotals');
+        if (splitToggle) splitToggle.checked = !!state.splitTotals;
         dom('lastUpdated').textContent = state.lastUpdated || '—';
         dom('usdCny').textContent = state.usdCny ? fmt4(state.usdCny) : '—';
 
         // Compute aggregates
         const { per, totalUsd, totalCashUsd, totalNonCashUsd } = computeAggregates();
-        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd);
+        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd);
         renderNonCashBreakdown(per, totalNonCashUsd);
 
         // Plan
@@ -876,6 +904,12 @@
           ta.remove();
           alert('已复制到剪贴板');
         }
+      });
+
+      dom('toggleSplitTotals')?.addEventListener('change', async (e) => {
+        state.splitTotals = !!e.target.checked;
+        persist();
+        await rerenderAll({ silent: true });
       });
 
       dom('algoMode')?.addEventListener('change', async (e) => {
