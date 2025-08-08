@@ -81,6 +81,11 @@
       button.ghost { background: transparent; }
       button.warn { background: var(--warn); border-color: transparent; color: #091015; }
       button.danger { background: var(--danger); border-color: transparent; }
+      /* Outline buttons */
+      button.outline-accent { background: transparent; color: var(--accent); border-color: var(--accent); }
+      button.outline-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+      /* Generic hover effect */
+      button:hover { background: #121824; border-color: #2b3644; }
       .muted { color: var(--muted); }
       .small { font-size: 12px; }
       .pill {
@@ -173,8 +178,6 @@
                 <th>Coin</th>
                 <th>数量</th>
                 <th>价格 (USDT≈USD)</th>
-                <th>市值 (USD)</th>
-                <th>现金?</th>
                 <th class="right">操作</th>
               </tr>
             </thead>
@@ -267,7 +270,7 @@
           </div>
           <div id="plan" class="small" style="white-space: pre-line; line-height: 1.6;"></div>
           <div class="row" style="margin-top: 8px;">
-            <button id="btnCopyPlan" class="primary">复制建议</button>
+            <button id="btnCopyPlan" title="复制建议" aria-label="复制建议">复制建议</button>
           </div>
         </div>
       </div>
@@ -288,6 +291,7 @@
       const dom = (id) => document.getElementById(id);
       const fmt2 = (n) => isFinite(n) ? Number(n).toFixed(2) : "—";
       const fmt4 = (n) => isFinite(n) ? Number(n).toFixed(4) : "—";
+      const fmt0 = (n) => isFinite(n) ? Number(n).toFixed(0) : "—";
       const pct = (p) => isFinite(p) ? (p * 100).toFixed(2) + "%" : "—";
       const nowTs = () => new Date().toLocaleString();
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -514,10 +518,8 @@
                 <span class="small muted">自动:${price != null ? fmt4(price) : '—'}</span>
               </div>
             </td>
-            <td class="mono">${value != null ? fmt2(value) : '—'}</td>
-            <td>${cash ? '<span class="tag">USDT/USDC</span>' : '-'}</td>
             <td class="right">
-              <button data-k="removeRow" data-i="${i}" class="danger">删除</button>
+              <button data-k="removeRow" data-i="${i}" title="删除此行" aria-label="删除">x</button>
             </td>
           `;
           tbody.appendChild(tr);
@@ -630,17 +632,17 @@
         if (!split) {
           if (labelUsd) labelUsd.textContent = '总资产 (USD)';
           if (labelCny) labelCny.textContent = '总资产 (CNY)';
-          dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt2(totalUsd)}` : '—';
+          dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt0(totalUsd)}` : '—';
           const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
-          dom('totalCny').textContent = isFinite(cny) ? `¥${fmt2(cny)}` : '—';
+          dom('totalCny').textContent = isFinite(cny) ? `¥${fmt0(cny)}` : '—';
         } else {
           if (labelUsd) labelUsd.textContent = '非现金/现金 (USD)';
           if (labelCny) labelCny.textContent = '非现金/现金 (CNY)';
-          dom('totalUsd').textContent = `$${fmt2(totalNonCashUsd)} / $${fmt2(totalCashUsd)}`;
+          dom('totalUsd').textContent = `$${fmt0(totalNonCashUsd)} / $${fmt0(totalCashUsd)}`;
           const cnyNonCash = isFinite(usdCny) ? totalNonCashUsd * usdCny : NaN;
           const cnyCash = isFinite(usdCny) ? totalCashUsd * usdCny : NaN;
           dom('totalCny').textContent = (isFinite(cnyNonCash) && isFinite(cnyCash))
-            ? `¥${fmt2(cnyNonCash)} / ¥${fmt2(cnyCash)}`
+            ? `¥${fmt0(cnyNonCash)} / ¥${fmt0(cnyCash)}`
             : '—';
         }
 
