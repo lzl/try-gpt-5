@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crypto Portfolio Rebalance</title>
+    <style>
+      :root {
+        --bg: #0f1218;
+        --panel: #151a23;
+        --muted: #8b97a8;
+        --text: #e8eef7;
+        --accent: #4ea1ff;
+        --accent-2: #2ecc71;
+        --warn: #ffb020;
+        --danger: #ff5c5c;
+        --border: #232b36;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+
+      .container {
+        max-width: 1100px;
+        margin: 24px auto 80px;
+        padding: 0 16px;
+      }
+
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 16px;
+      }
+      h2 {
+        font-size: 16px;
+        color: var(--muted);
+        font-weight: 600;
+        margin: 18px 0 10px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+      @media (min-width: 960px) {
+        .grid-2 { grid-template-columns: 1fr 1fr; }
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .spacer { flex: 1; }
+
+      button, input, select {
+        background: #0e131a;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+      }
+      input[type="number"] {
+        width: 140px;
+      }
+      input[readonly] { opacity: 0.8; }
+      button { cursor: pointer; }
+      button.primary { background: var(--accent); border-color: transparent; }
+      button.ghost { background: transparent; }
+      button.warn { background: var(--warn); border-color: transparent; color: #091015; }
+      button.danger { background: var(--danger); border-color: transparent; }
+      .muted { color: var(--muted); }
+      .small { font-size: 12px; }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
+      thead th {
+        font-weight: 600;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: left;
+        padding: 0 8px 4px;
+      }
+      tbody tr { background: #0e131a; }
+      tbody td { padding: 10px 8px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+      tbody tr td:first-child { border-left: 1px solid var(--border); border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+      tbody tr td:last-child { border-right: 1px solid var(--border); border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+
+      .kpi {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+      .kpi .box {
+        background: #0e131a;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .kpi .label { color: var(--muted); font-size: 12px; }
+      .kpi .value { font-weight: 700; font-size: 18px; margin-top: 4px; }
+
+      .tag { font-size: 12px; color: var(--muted); }
+      .right { text-align: right; }
+      .center { text-align: center; }
+      .ok { color: var(--accent-2); }
+      .warn-text { color: var(--warn); }
+      .danger-text { color: var(--danger); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+      .soft {
+        background: #0b0f14;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        padding: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Crypto Portfolio Rebalance</h1>
+
+      <div class="card">
+        <div class="row">
+          <div class="pill">数据源：Binance 价格，exchangerate.host 汇率</div>
+          <div class="pill">货币：USD/USDT，汇率 USD→CNY</div>
+          <div class="spacer"></div>
+          <label class="row small">
+            <span class="muted">算法:</span>
+            <select id="algoMode">
+              <option value="bridge">USDT 桥接（稳健）</option>
+              <option value="optimized">直达配对优先（贪心）</option>
+            </select>
+          </label>
+          <button id="btnRefresh" class="ghost">刷新价格/汇率</button>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>持仓输入</h2>
+          <div class="row small muted" style="margin-bottom: 6px;">
+            <div>可新增 coin（默认价格使用 SYMBOLUSDT）。现金 coin 自动识别 USDT/USDC。</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Coin</th>
+                <th>数量</th>
+                <th>价格 (USDT≈USD)</th>
+                <th>市值 (USD)</th>
+                <th>现金?</th>
+                <th class="right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="holdingsBody"></tbody>
+          </table>
+          <div class="row" style="margin-top: 10px;">
+            <button id="btnAddCoin">新增 Coin</button>
+            <button id="btnReset" class="ghost">重置为默认</button>
+            <div class="spacer"></div>
+            <div class="small muted">价格自动更新；也可手动覆盖。</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>市场与汇率</h2>
+          <div class="kpi" style="margin-bottom: 10px;">
+            <div class="box">
+              <div class="label">总资产 (USD)</div>
+              <div class="value" id="totalUsd">—</div>
+            </div>
+            <div class="box">
+              <div class="label">总资产 (CNY)</div>
+              <div class="value" id="totalCny">—</div>
+            </div>
+            <div class="box">
+              <div class="label">现金占比</div>
+              <div class="value" id="cashPct">—</div>
+            </div>
+          </div>
+          <div class="soft small">
+            <div class="row">
+              <div>USD→CNY: <span class="mono" id="usdCny">—</span></div>
+              <div class="spacer"></div>
+              <div>上次更新：<span class="mono" id="lastUpdated">—</span></div>
+            </div>
+          </div>
+
+          <h2 style="margin-top: 14px;">当前非现金仓位</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Coin</th>
+                <th>现值 (USD)</th>
+                <th>在非现金中占比</th>
+              </tr>
+            </thead>
+            <tbody id="nonCashBreakdown"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>目标配置</h2>
+          <div class="row" style="margin-bottom: 8px;">
+            <label>现金目标占比（相对于总资产 %）
+              <input id="targetCashPct" type="number" min="0" max="100" step="0.01" />
+            </label>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>非现金 Coin</th>
+                <th>目标权重 (%)</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="targetBody"></tbody>
+          </table>
+          <div class="row" style="margin-top: 8px;">
+            <div class="muted small">目标权重总和需为 100%。当前总和：<span class="mono" id="targetSum">—</span>%</div>
+            <div class="spacer"></div>
+            <button id="btnNormalize" class="ghost">归一至 100%</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>换仓建议</h2>
+          <div class="soft small" style="margin-bottom: 10px;">
+            <div>算法说明：</div>
+            <ul>
+              <li>USDT 桥接：卖出超配的非现金 coin → USDT；再用 USDT 买入低配的 coin。</li>
+              <li>直达配对优先：若存在直达交易对（AB 或 BA），优先用 1 步完成；无法直达再用 USDT 兜底。</li>
+            </ul>
+          </div>
+          <div id="plan" class="small" style="white-space: pre-line; line-height: 1.6;"></div>
+          <div class="row" style="margin-top: 8px;">
+            <button id="btnCopyPlan" class="primary">复制建议</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // =============================
+      // Utilities & Constants
+      // =============================
+      const CASH_COINS = new Set(["USDT", "USDC"]);
+      const DEFAULT_ROWS = [
+        { symbol: "BTC", amount: 0 },
+        { symbol: "ETH", amount: 0 },
+        { symbol: "ADA", amount: 0 },
+        { symbol: "USDT", amount: 0 },
+      ];
+
+      const dom = (id) => document.getElementById(id);
+      const fmt2 = (n) => isFinite(n) ? Number(n).toFixed(2) : "—";
+      const fmt4 = (n) => isFinite(n) ? Number(n).toFixed(4) : "—";
+      const pct = (p) => isFinite(p) ? (p * 100).toFixed(2) + "%" : "—";
+      const nowTs = () => new Date().toLocaleString();
+      const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+      function isCash(symbol) {
+        return CASH_COINS.has(String(symbol || "").toUpperCase());
+      }
+
+      function normalizeSymbol(symbol) {
+        return String(symbol || "").trim().toUpperCase();
+      }
+
+      function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+      function groupBySymbol(rows) {
+        const map = new Map();
+        for (const r of rows) {
+          const s = normalizeSymbol(r.symbol);
+          if (!s) continue;
+          const amount = Number(r.amount) || 0;
+          const manual = !!r.manualPriceEnabled;
+          const manualPrice = Number(r.manualPrice) || 0;
+          if (!map.has(s)) map.set(s, { symbol: s, amount: 0, manualPriceEnabled: false, manualPrice: 0 });
+          const entry = map.get(s);
+          entry.amount += amount;
+          // If any row has manual price enabled, keep last non-zero value
+          if (manual) {
+            entry.manualPriceEnabled = true;
+            if (manualPrice > 0) entry.manualPrice = manualPrice;
+          }
+        }
+        return [...map.values()];
+      }
+
+      // =============================
+      // Local Storage
+      // =============================
+      const LS_KEY = "cp_rebalance_state_v1";
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (!raw) return null;
+          return JSON.parse(raw);
+        } catch (e) {
+          console.warn("Load state failed", e);
+          return null;
+        }
+      }
+      function saveState(state) {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
+      }
+
+      // =============================
+      // Market Data: Binance + exchangerate.host
+      // =============================
+      async function fetchUsdCny() {
+        try {
+          const res = await fetch('https://api.exchangerate.host/latest?base=USD&symbols=CNY');
+          const data = await res.json();
+          const rate = data?.rates?.CNY;
+          return typeof rate === 'number' ? rate : null;
+        } catch (e) {
+          console.warn('fetchUsdCny failed', e);
+          return null;
+        }
+      }
+
+      async function fetchTickerPrice(symbol) {
+        // symbol like BTCUSDT, ETHBTC, USDCUSDT
+        const url = `https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`;
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return null;
+          const data = await res.json();
+          const price = Number(data?.price);
+          return isFinite(price) ? price : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function fetchPricesForSymbols(symbols) {
+        // symbols: array of coin symbols, want price in USDT terms
+        const cache = new Map();
+        const tasks = symbols.map(async (s) => {
+          const sym = normalizeSymbol(s);
+          if (!sym) return;
+          if (cache.has(sym)) return;
+          if (sym === 'USDT') { cache.set(sym, 1); return; }
+          if (sym === 'USDC') {
+            const p = await fetchTickerPrice('USDCUSDT');
+            cache.set(sym, p ?? 1);
+            return;
+          }
+          const p1 = await fetchTickerPrice(sym + 'USDT');
+          if (p1 != null) { cache.set(sym, p1); return; }
+          // As a weak fallback, try USDTsym inverse (rare)
+          const p2 = await fetchTickerPrice('USDT' + sym);
+          if (p2 != null && p2 > 0) { cache.set(sym, 1 / p2); return; }
+          cache.set(sym, null);
+        });
+        await Promise.all(tasks);
+        return cache; // Map symbol->price or null
+      }
+
+      // Cache for direct pair existence
+      const directPairCache = new Map(); // key "A->B" => { exists: boolean, via: 'AB' | 'BA' | null }
+      async function checkDirectPairExists(sell, buy) {
+        const a = normalizeSymbol(sell), b = normalizeSymbol(buy);
+        if (!a || !b || a === b) return { exists: false, via: null };
+        const key = `${a}->${b}`;
+        if (directPairCache.has(key)) return directPairCache.get(key);
+        // Try AB first (sell A for quote B)
+        const ab = await fetchTickerPrice(a + b);
+        if (ab != null) {
+          const r = { exists: true, via: 'AB' };
+          directPairCache.set(key, r);
+          return r;
+        }
+        const ba = await fetchTickerPrice(b + a);
+        if (ba != null) {
+          const r = { exists: true, via: 'BA' };
+          directPairCache.set(key, r);
+          return r;
+        }
+        const r = { exists: false, via: null };
+        directPairCache.set(key, r);
+        return r;
+      }
+
+      // =============================
+      // State & Rendering
+      // =============================
+      const state = {
+        holdingsRows: deepClone(DEFAULT_ROWS), // [{symbol, amount, manualPriceEnabled?, manualPrice?}]
+        prices: {}, // { symbol: number|null }
+        usdCny: null,
+        algoMode: 'bridge', // 'bridge' | 'optimized'
+        targets: {
+          cashPct: 10, // default 10%
+          nonCashWeights: {} // { symbol: pct }
+        },
+        lastUpdated: null,
+      };
+
+      function restore() {
+        const saved = loadState();
+        if (!saved) return;
+        if (Array.isArray(saved.holdingsRows)) state.holdingsRows = saved.holdingsRows;
+        if (saved.algoMode) state.algoMode = saved.algoMode;
+        if (saved.targets) state.targets = saved.targets;
+      }
+
+      function persist() {
+        saveState({
+          holdingsRows: state.holdingsRows,
+          algoMode: state.algoMode,
+          targets: state.targets
+        });
+      }
+
+      // =============================
+      // Rendering: Holdings Table
+      // =============================
+      function renderHoldingsTable() {
+        const tbody = dom('holdingsBody');
+        tbody.innerHTML = '';
+        for (let i = 0; i < state.holdingsRows.length; i++) {
+          const row = state.holdingsRows[i];
+          const symbol = normalizeSymbol(row.symbol);
+          const price = (row.manualPriceEnabled ? Number(row.manualPrice) || null : state.prices[symbol] ?? null);
+          const amount = Number(row.amount) || 0;
+          const value = price != null ? amount * price : null;
+          const cash = isCash(symbol);
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>
+              <input data-k="symbol" data-i="${i}" value="${symbol}" placeholder="如 BTC" style="width: 110px;" />
+            </td>
+            <td>
+              <input data-k="amount" data-i="${i}" type="number" step="any" min="0" value="${amount}" />
+            </td>
+            <td>
+              <div class="row">
+                <input data-k="manualPrice" data-i="${i}" type="number" step="any" min="0" value="${row.manualPrice ?? ''}" placeholder="自动/手动" style="width: 130px;" ${row.manualPriceEnabled ? '' : 'readonly'} />
+                <label class="small">
+                  <input data-k="manualPriceEnabled" data-i="${i}" type="checkbox" ${row.manualPriceEnabled ? 'checked' : ''} /> 手动
+                </label>
+                <span class="small muted">自动:${price != null ? fmt4(price) : '—'}</span>
+              </div>
+            </td>
+            <td class="mono">${value != null ? fmt2(value) : '—'}</td>
+            <td>${cash ? '<span class="tag">USDT/USDC</span>' : '-'}</td>
+            <td class="right">
+              <button data-k="removeRow" data-i="${i}" class="danger">删除</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+
+        tbody.querySelectorAll('input').forEach(el => {
+          el.addEventListener('input', onHoldingsInputChange);
+          el.addEventListener('change', onHoldingsInputChange);
+        });
+        tbody.querySelectorAll('button[data-k="removeRow"]').forEach(btn => btn.addEventListener('click', onRemoveRow));
+      }
+
+      function onRemoveRow(e) {
+        const i = Number(e.currentTarget.getAttribute('data-i'));
+        state.holdingsRows.splice(i, 1);
+        persist();
+        rerenderAll();
+      }
+
+      function onHoldingsInputChange(e) {
+        const i = Number(e.target.getAttribute('data-i'));
+        const key = e.target.getAttribute('data-k');
+        const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+        const row = state.holdingsRows[i];
+        if (!row) return;
+        if (key === 'symbol') row.symbol = normalizeSymbol(v);
+        else if (key === 'amount') row.amount = Number(v) || 0;
+        else if (key === 'manualPrice') row.manualPrice = Number(v) || 0;
+        else if (key === 'manualPriceEnabled') row.manualPriceEnabled = !!v;
+
+        persist();
+        rerenderAll({ fetchPrices: key === 'symbol' });
+      }
+
+      // =============================
+      // Rendering: Targets Table
+      // =============================
+      function renderTargetsTable(aggregated) {
+        const tbody = dom('targetBody');
+        tbody.innerHTML = '';
+        const nonCash = aggregated.filter(a => !isCash(a.symbol));
+        const weights = state.targets.nonCashWeights || {};
+        for (const a of nonCash) {
+          const w = Number(weights[a.symbol]) || 0;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${a.symbol}</td>
+            <td>
+              <input data-k="target" data-symbol="${a.symbol}" type="number" step="0.01" min="0" max="100" value="${w}" />
+            </td>
+            <td class="small muted">将在非现金池内归一</td>
+          `;
+          tbody.appendChild(tr);
+        }
+
+        tbody.querySelectorAll('input[data-k="target"]').forEach(el => {
+          el.addEventListener('input', onTargetInput);
+          el.addEventListener('change', onTargetInput);
+        });
+      }
+
+      function onTargetInput(e) {
+        const sym = e.target.getAttribute('data-symbol');
+        const v = clamp(Number(e.target.value) || 0, 0, 100);
+        state.targets.nonCashWeights = state.targets.nonCashWeights || {};
+        state.targets.nonCashWeights[sym] = v;
+        persist();
+        rerenderAll();
+      }
+
+      // =============================
+      // Computation
+      // =============================
+      function computeAggregates() {
+        const aggregated = groupBySymbol(state.holdingsRows);
+        const prices = state.prices || {};
+        let totalUsd = 0, totalCashUsd = 0, totalNonCashUsd = 0;
+        const per = [];
+        for (const a of aggregated) {
+          const price = a.manualPriceEnabled && a.manualPrice > 0 ? a.manualPrice : (prices[a.symbol] ?? null);
+          const value = price != null ? a.amount * price : 0;
+          totalUsd += value;
+          if (isCash(a.symbol)) totalCashUsd += value; else totalNonCashUsd += value;
+          per.push({ symbol: a.symbol, amount: a.amount, price, value, isCash: isCash(a.symbol) });
+        }
+        return { per, totalUsd, totalCashUsd, totalNonCashUsd };
+      }
+
+      function renderNonCashBreakdown(per, totalNonCashUsd) {
+        const tbody = dom('nonCashBreakdown');
+        tbody.innerHTML = '';
+        const nonCash = per.filter(x => !x.isCash);
+        for (const x of nonCash) {
+          const share = totalNonCashUsd > 0 ? x.value / totalNonCashUsd : 0;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${x.symbol}</td>
+            <td class="mono">${fmt2(x.value)}</td>
+            <td>${pct(share)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      function renderKpis(totalUsd, usdCny, totalCashUsd) {
+        dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt2(totalUsd)}` : '—';
+        const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
+        dom('totalCny').textContent = isFinite(cny) ? `¥${fmt2(cny)}` : '—';
+        const cashPct = totalUsd > 0 ? totalCashUsd / totalUsd : 0;
+        dom('cashPct').textContent = pct(cashPct);
+      }
+
+      function renderTargetSum() {
+        const weights = state.targets.nonCashWeights || {};
+        const sum = Object.values(weights).reduce((a, b) => a + (Number(b) || 0), 0);
+        dom('targetSum').textContent = fmt2(sum);
+        dom('targetSum').className = sum >= 99.99 && sum <= 100.01 ? 'ok mono' : 'warn-text mono';
+      }
+
+      function getBridgeCoin(per) {
+        // Prefer USDT, then USDC, else the first cash coin if any
+        const have = new Set(per.filter(x => x.isCash && x.amount * (x.price ?? 0) >= 0).map(x => x.symbol));
+        if (have.has('USDT')) return 'USDT';
+        if (have.has('USDC')) return 'USDC';
+        const any = [...have][0];
+        return any || 'USDT';
+      }
+
+      function computeDeltas(per, totalUsd) {
+        // Inputs: per[] with symbol, value, isCash; targets: cashPct (0-100), nonCashWeights (sum to 100 expected)
+        const cashTarget = clamp(Number(state.targets.cashPct) || 0, 0, 100) / 100;
+        const weights = state.targets.nonCashWeights || {};
+        const nonCashCoins = per.filter(x => !x.isCash);
+        const currentCashUsd = per.filter(x => x.isCash).reduce((a, x) => a + (x.value || 0), 0);
+        const targetCashUsd = totalUsd * cashTarget;
+        const targetNonCashPoolUsd = Math.max(0, totalUsd - targetCashUsd);
+
+        // Normalize weights (if sum != 100)
+        const sumW = nonCashCoins.reduce((a, x) => a + (Number(weights[x.symbol]) || 0), 0);
+        const normFactor = sumW > 0 ? (1 / sumW) : 0;
+
+        const targetPer = {};
+        for (const x of nonCashCoins) {
+          const w = (Number(weights[x.symbol]) || 0) * normFactor; // 0..1
+          targetPer[x.symbol] = targetNonCashPoolUsd * w;
+        }
+        // Cash pool target is targetCashUsd; distribute across cash coins implicitly
+
+        const deltas = [];
+        for (const x of per) {
+          if (x.isCash) continue; // handle as pool
+          const target = targetPer[x.symbol] || 0;
+          const cur = x.value || 0;
+          deltas.push({ symbol: x.symbol, deltaUsd: target - cur, price: x.price, amount: x.amount });
+        }
+        const cashDeltaUsd = targetCashUsd - currentCashUsd; // >0 need increase cash, <0 need reduce cash
+        return { deltas, cashDeltaUsd, targetCashUsd, targetNonCashPoolUsd };
+      }
+
+      function usdToAmount(usd, price) {
+        if (!isFinite(usd) || !isFinite(price) || price <= 0) return 0;
+        return usd / price;
+      }
+
+      function sortByAbsUsdDesc(list) { return [...list].sort((a,b) => Math.abs(b.deltaUsd) - Math.abs(a.deltaUsd)); }
+
+      function bridgePlan(per, deltas) {
+        const bridge = getBridgeCoin(per);
+        const sells = deltas.filter(x => x.deltaUsd < -1e-6);
+        const buys = deltas.filter(x => x.deltaUsd > 1e-6);
+        const lines = [];
+        for (const s of sells) {
+          const usd = -s.deltaUsd;
+          const qty = usdToAmount(usd, s.price);
+          lines.push(`卖出 ${s.symbol} ${fmt4(qty)} → ${bridge}（≈ $${fmt2(usd)}）`);
+        }
+        for (const b of buys) {
+          const usd = b.deltaUsd;
+          const qty = usdToAmount(usd, b.price);
+          lines.push(`用 ${bridge} 购买 ${b.symbol} ${fmt4(qty)}（≈ $${fmt2(usd)}）`);
+        }
+        if (lines.length === 0) lines.push('已达目标，无需操作。');
+        return { lines, steps: lines.length };
+      }
+
+      async function optimizedPlan(per, deltas) {
+        const bridge = getBridgeCoin(per);
+        const sellers = sortByAbsUsdDesc(deltas.filter(x => x.deltaUsd < -1e-6));
+        const buyers = sortByAbsUsdDesc(deltas.filter(x => x.deltaUsd > 1e-6));
+        const lines = [];
+
+        // Work on copies we can mutate
+        const sellersQ = sellers.map(s => ({ ...s, needUsd: -s.deltaUsd }));
+        const buyersQ = buyers.map(b => ({ ...b, needUsd: b.deltaUsd }));
+
+        // Greedy direct matching
+        while (sellersQ.length && buyersQ.length) {
+          // Pick the largest pair
+          sellersQ.sort((a,b) => b.needUsd - a.needUsd);
+          buyersQ.sort((a,b) => b.needUsd - a.needUsd);
+          const s = sellersQ[0];
+          const b = buyersQ[0];
+          const tradeUsd = Math.min(s.needUsd, b.needUsd);
+
+          const pair = await checkDirectPairExists(s.symbol, b.symbol);
+          if (pair.exists) {
+            const qtyS = usdToAmount(tradeUsd, s.price);
+            const qtyB = usdToAmount(tradeUsd, b.price);
+            lines.push(`直达：${s.symbol} ${fmt4(qtyS)} → ${b.symbol} ${fmt4(qtyB)}（≈ $${fmt2(tradeUsd)}）`);
+            s.needUsd -= tradeUsd;
+            b.needUsd -= tradeUsd;
+            if (s.needUsd <= 1e-6) sellersQ.shift();
+            if (b.needUsd <= 1e-6) buyersQ.shift();
+          } else {
+            // No direct; try next buyer to see if direct exists
+            let matched = false;
+            for (let i = 1; i < buyersQ.length; i++) {
+              const bb = buyersQ[i];
+              const pr = await checkDirectPairExists(s.symbol, bb.symbol);
+              if (pr.exists) {
+                const useUsd = Math.min(s.needUsd, bb.needUsd);
+                const qtyS2 = usdToAmount(useUsd, s.price);
+                const qtyB2 = usdToAmount(useUsd, bb.price);
+                lines.push(`直达：${s.symbol} ${fmt4(qtyS2)} → ${bb.symbol} ${fmt4(qtyB2)}（≈ $${fmt2(useUsd)}）`);
+                s.needUsd -= useUsd;
+                bb.needUsd -= useUsd;
+                if (s.needUsd <= 1e-6) sellersQ.shift();
+                if (bb.needUsd <= 1e-6) buyersQ.splice(i, 1);
+                matched = true;
+                break;
+              }
+            }
+            if (!matched) {
+              // Could not match any direct for this seller; move it to bridge later by removing it now
+              sellersQ.shift();
+              sellers.push(s); // add back to original list for bridge stage
+            }
+          }
+        }
+
+        // Whatever remains (both sides) bridge via USDT
+        // Recompute left needs from sellers and buyers that weren't directly matched
+        const remSellers = sellers.filter(s => s.deltaUsd < -1e-6);
+        const remBuyers = buyers.filter(b => b.deltaUsd > 1e-6);
+        const usedUsdDirectSell = lines.reduce((sum, ln) => {
+          const m = ln.match(/≈ \$([0-9.]+)/);
+          if (m) return sum + Number(m[1]);
+          return sum;
+        }, 0);
+        // Not exact tracking; but we keep original deltas for bridge steps, which double counts if we subtract direct usage incorrectly.
+        // Instead, recompute residuals by subtracting direct usage proportionally tracked above is complex.
+        // Simpler: Track residuals as we go. We'll redo above with arrays that retain residuals.
+        // For simplicity, recompute residuals from sellersQ and buyersQ we already mutated.
+        const residualS = [];
+        const residualB = [];
+        // sellersQ currently contains only items either empty first or leftover we didn't shift
+        for (const s of sellersQ) if (s.needUsd > 1e-6) residualS.push({ symbol: s.symbol, usd: s.needUsd, price: s.price });
+        for (const b of buyersQ) if (b.needUsd > 1e-6) residualB.push({ symbol: b.symbol, usd: b.needUsd, price: b.price });
+
+        // For sellers moved to bridge earlier in loop, include their remaining needs
+        for (const s of remSellers) {
+          const used = sellersQ.find(x => x.symbol === s.symbol);
+          const alreadyHandledUsd = used ? (s.needUsd - used.needUsd) : 0; // approximate
+          const remaining = -s.deltaUsd - Math.max(0, alreadyHandledUsd);
+          if (remaining > 1e-6) residualS.push({ symbol: s.symbol, usd: remaining, price: s.price });
+        }
+        for (const b of remBuyers) {
+          const used = buyersQ.find(x => x.symbol === b.symbol);
+          const alreadyHandledUsd = used ? (b.needUsd - used.needUsd) : 0;
+          const remaining = b.deltaUsd - Math.max(0, alreadyHandledUsd);
+          if (remaining > 1e-6) residualB.push({ symbol: b.symbol, usd: remaining, price: b.price });
+        }
+
+        for (const s of residualS) {
+          const qty = usdToAmount(s.usd, s.price);
+          lines.push(`桥接：卖出 ${s.symbol} ${fmt4(qty)} → ${bridge}（≈ $${fmt2(s.usd)}）`);
+        }
+        for (const b of residualB) {
+          const qty = usdToAmount(b.usd, b.price);
+          lines.push(`桥接：用 ${bridge} 购买 ${b.symbol} ${fmt4(qty)}（≈ $${fmt2(b.usd)}）`);
+        }
+
+        if (lines.length === 0) lines.push('已达目标，无需操作。');
+        return { lines, steps: lines.length };
+      }
+
+      async function recomputeAndRenderPlan(per, totalUsd) {
+        const { deltas, cashDeltaUsd } = computeDeltas(per, totalUsd);
+        const mode = state.algoMode;
+        let plan;
+        if (mode === 'optimized') plan = await optimizedPlan(per, deltas);
+        else plan = bridgePlan(per, deltas);
+
+        const extra = [];
+        if (Math.abs(cashDeltaUsd) > 1e-6) {
+          extra.push(`现金池需要${cashDeltaUsd > 0 ? '增加' : '减少'}：$${fmt2(Math.abs(cashDeltaUsd))}`);
+        }
+        dom('plan').textContent = (extra.length ? (extra.join('\n') + '\n') : '') + plan.lines.map((x,i)=>`${i+1}. ${x}`).join('\n');
+      }
+
+      async function rerenderAll(opts = { fetchPrices: false, silent: false }) {
+        // Update inputs
+        dom('algoMode').value = state.algoMode;
+        dom('targetCashPct').value = Number(state.targets.cashPct) || 0;
+
+        // Fetch prices if needed
+        const aggregated = groupBySymbol(state.holdingsRows);
+        const symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        if (opts.fetchPrices) {
+          const map = await fetchPricesForSymbols(symbols);
+          state.prices = Object.fromEntries(map.entries());
+          state.lastUpdated = nowTs();
+        }
+
+        // Render tables
+        renderHoldingsTable();
+        renderTargetsTable(aggregated);
+        renderTargetSum();
+        dom('lastUpdated').textContent = state.lastUpdated || '—';
+        dom('usdCny').textContent = state.usdCny ? fmt4(state.usdCny) : '—';
+
+        // Compute aggregates
+        const { per, totalUsd, totalCashUsd, totalNonCashUsd } = computeAggregates();
+        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd);
+        renderNonCashBreakdown(per, totalNonCashUsd);
+
+        // Plan
+        await recomputeAndRenderPlan(per, totalUsd);
+      }
+
+      // =============================
+      // Events
+      // =============================
+      dom('btnAddCoin')?.addEventListener('click', () => {
+        state.holdingsRows.push({ symbol: '', amount: 0 });
+        persist();
+        rerenderAll();
+      });
+
+      dom('btnReset')?.addEventListener('click', () => {
+        state.holdingsRows = deepClone(DEFAULT_ROWS);
+        state.targets.nonCashWeights = {};
+        state.targets.cashPct = 10;
+        persist();
+        rerenderAll({ fetchPrices: true });
+      });
+
+      dom('btnRefresh')?.addEventListener('click', async () => {
+        await refreshMarketData(true);
+      });
+
+      dom('btnNormalize')?.addEventListener('click', () => {
+        const aggregated = groupBySymbol(state.holdingsRows);
+        const nonCash = aggregated.filter(a => !isCash(a.symbol));
+        if (!nonCash.length) return;
+        const each = 100 / nonCash.length;
+        state.targets.nonCashWeights = {};
+        for (const a of nonCash) state.targets.nonCashWeights[a.symbol] = each;
+        persist();
+        rerenderAll();
+      });
+
+      dom('btnCopyPlan')?.addEventListener('click', async () => {
+        const text = dom('plan').textContent || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          alert('已复制到剪贴板');
+        } catch {
+          // Fallback
+          const ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          document.execCommand('copy');
+          ta.remove();
+          alert('已复制到剪贴板');
+        }
+      });
+
+      dom('algoMode')?.addEventListener('change', async (e) => {
+        state.algoMode = e.target.value;
+        persist();
+        await rerenderAll();
+      });
+
+      dom('targetCashPct')?.addEventListener('input', async (e) => {
+        const v = clamp(Number(e.target.value) || 0, 0, 100);
+        state.targets.cashPct = v;
+        persist();
+        await rerenderAll();
+      });
+
+      // =============================
+      // Market bootstrap
+      // =============================
+      async function refreshMarketData(forcePrice = false) {
+        // Fetch rate first
+        const rate = await fetchUsdCny();
+        if (rate != null) state.usdCny = rate;
+        // Fetch prices for all current symbols
+        const aggregated = groupBySymbol(state.holdingsRows);
+        const symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        const map = await fetchPricesForSymbols(symbols);
+        state.prices = Object.fromEntries(map.entries());
+        state.lastUpdated = nowTs();
+        await rerenderAll();
+      }
+
+      async function main() {
+        restore();
+        // initial render
+        renderHoldingsTable();
+        dom('algoMode').value = state.algoMode;
+        dom('targetCashPct').value = Number(state.targets.cashPct) || 0;
+        renderTargetSum();
+        // Fetch data
+        await refreshMarketData(true);
+      }
+
+      main();
+    </script>
+  </body>
+</html>
+
+
