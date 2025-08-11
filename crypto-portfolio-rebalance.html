@@ -770,100 +770,67 @@
       }
 
       async function optimizedPlan(per, deltas) {
+        // Greedy direct matching first, then bridge strictly for the residuals.
         const bridge = getBridgeCoin(per);
-        const sellers = sortByAbsUsdDesc(deltas.filter(x => x.deltaUsd < -1e-6));
-        const buyers = sortByAbsUsdDesc(deltas.filter(x => x.deltaUsd > 1e-6));
+        const priceBySymbol = new Map(per.map(x => [x.symbol, x.price]));
+
+        // Build mutable residual queues
+        const sellersQ = deltas
+          .filter(x => x.deltaUsd < -1e-6)
+          .map(s => ({ symbol: s.symbol, remainingUsd: -s.deltaUsd, price: s.price }));
+        const buyersQ = deltas
+          .filter(x => x.deltaUsd > 1e-6)
+          .map(b => ({ symbol: b.symbol, remainingUsd: b.deltaUsd, price: b.price }));
+
         const lines = [];
+        const bridgeSells = [];
 
-        // Work on copies we can mutate
-        const sellersQ = sellers.map(s => ({ ...s, needUsd: -s.deltaUsd }));
-        const buyersQ = buyers.map(b => ({ ...b, needUsd: b.deltaUsd }));
-
-        // Greedy direct matching
+        // Try to satisfy as much as possible via direct pairs
         while (sellersQ.length && buyersQ.length) {
-          // Pick the largest pair
-          sellersQ.sort((a,b) => b.needUsd - a.needUsd);
-          buyersQ.sort((a,b) => b.needUsd - a.needUsd);
+          sellersQ.sort((a, b) => b.remainingUsd - a.remainingUsd);
+          buyersQ.sort((a, b) => b.remainingUsd - a.remainingUsd);
           const s = sellersQ[0];
-          const b = buyersQ[0];
-          const tradeUsd = Math.min(s.needUsd, b.needUsd);
 
-          const pair = await checkDirectPairExists(s.symbol, b.symbol);
-          if (pair.exists) {
-            const qtyS = usdToAmount(tradeUsd, s.price);
-            const qtyB = usdToAmount(tradeUsd, b.price);
-            lines.push(`直达：${s.symbol} ${fmt4(qtyS)} → ${b.symbol} ${fmt4(qtyB)}（≈ $${fmt2(tradeUsd)}）`);
-            s.needUsd -= tradeUsd;
-            b.needUsd -= tradeUsd;
-            if (s.needUsd <= 1e-6) sellersQ.shift();
-            if (b.needUsd <= 1e-6) buyersQ.shift();
-          } else {
-            // No direct; try next buyer to see if direct exists
-            let matched = false;
-            for (let i = 1; i < buyersQ.length; i++) {
-              const bb = buyersQ[i];
-              const pr = await checkDirectPairExists(s.symbol, bb.symbol);
-              if (pr.exists) {
-                const useUsd = Math.min(s.needUsd, bb.needUsd);
-                const qtyS2 = usdToAmount(useUsd, s.price);
-                const qtyB2 = usdToAmount(useUsd, bb.price);
-                lines.push(`直达：${s.symbol} ${fmt4(qtyS2)} → ${bb.symbol} ${fmt4(qtyB2)}（≈ $${fmt2(useUsd)}）`);
-                s.needUsd -= useUsd;
-                bb.needUsd -= useUsd;
-                if (s.needUsd <= 1e-6) sellersQ.shift();
-                if (bb.needUsd <= 1e-6) buyersQ.splice(i, 1);
-                matched = true;
-                break;
-              }
-            }
-            if (!matched) {
-              // Could not match any direct for this seller; move it to bridge later by removing it now
-              sellersQ.shift();
-              sellers.push(s); // add back to original list for bridge stage
-            }
+          // Find any buyer with a direct market with this seller
+          let matchedIdx = -1;
+          for (let i = 0; i < buyersQ.length; i++) {
+            const pr = await checkDirectPairExists(s.symbol, buyersQ[i].symbol);
+            if (pr.exists) { matchedIdx = i; break; }
           }
+
+          if (matchedIdx === -1) {
+            // Defer this seller to the bridge phase
+            bridgeSells.push(s);
+            sellersQ.shift();
+            continue;
+          }
+
+          const b = buyersQ[matchedIdx];
+          const tradeUsd = Math.min(s.remainingUsd, b.remainingUsd);
+          const sellPrice = priceBySymbol.get(s.symbol) ?? s.price;
+          const buyPrice = priceBySymbol.get(b.symbol) ?? b.price;
+          const qtySell = usdToAmount(tradeUsd, sellPrice);
+          const qtyBuy = usdToAmount(tradeUsd, buyPrice);
+          lines.push(`直达：${s.symbol} ${fmt4(qtySell)} → ${b.symbol} ${fmt4(qtyBuy)}（≈ $${fmt2(tradeUsd)}）`);
+
+          s.remainingUsd -= tradeUsd;
+          b.remainingUsd -= tradeUsd;
+          if (s.remainingUsd <= 1e-6) sellersQ.shift();
+          if (b.remainingUsd <= 1e-6) buyersQ.splice(matchedIdx, 1);
         }
 
-        // Whatever remains (both sides) bridge via USDT
-        // Recompute left needs from sellers and buyers that weren't directly matched
-        const remSellers = sellers.filter(s => s.deltaUsd < -1e-6);
-        const remBuyers = buyers.filter(b => b.deltaUsd > 1e-6);
-        const usedUsdDirectSell = lines.reduce((sum, ln) => {
-          const m = ln.match(/≈ \$([0-9.]+)/);
-          if (m) return sum + Number(m[1]);
-          return sum;
-        }, 0);
-        // Not exact tracking; but we keep original deltas for bridge steps, which double counts if we subtract direct usage incorrectly.
-        // Instead, recompute residuals by subtracting direct usage proportionally tracked above is complex.
-        // Simpler: Track residuals as we go. We'll redo above with arrays that retain residuals.
-        // For simplicity, recompute residuals from sellersQ and buyersQ we already mutated.
-        const residualS = [];
-        const residualB = [];
-        // sellersQ currently contains only items either empty first or leftover we didn't shift
-        for (const s of sellersQ) if (s.needUsd > 1e-6) residualS.push({ symbol: s.symbol, usd: s.needUsd, price: s.price });
-        for (const b of buyersQ) if (b.needUsd > 1e-6) residualB.push({ symbol: b.symbol, usd: b.needUsd, price: b.price });
-
-        // For sellers moved to bridge earlier in loop, include their remaining needs
-        for (const s of remSellers) {
-          const used = sellersQ.find(x => x.symbol === s.symbol);
-          const alreadyHandledUsd = used ? (s.needUsd - used.needUsd) : 0; // approximate
-          const remaining = -s.deltaUsd - Math.max(0, alreadyHandledUsd);
-          if (remaining > 1e-6) residualS.push({ symbol: s.symbol, usd: remaining, price: s.price });
+        // Bridge phase: only residuals
+        for (const s of sellersQ) if (s.remainingUsd > 1e-6) bridgeSells.push(s);
+        for (const s of bridgeSells) {
+          const price = priceBySymbol.get(s.symbol) ?? s.price;
+          const qty = usdToAmount(s.remainingUsd, price);
+          lines.push(`桥接：卖出 ${s.symbol} ${fmt4(qty)} → ${bridge}（≈ $${fmt2(s.remainingUsd)}）`);
         }
-        for (const b of remBuyers) {
-          const used = buyersQ.find(x => x.symbol === b.symbol);
-          const alreadyHandledUsd = used ? (b.needUsd - used.needUsd) : 0;
-          const remaining = b.deltaUsd - Math.max(0, alreadyHandledUsd);
-          if (remaining > 1e-6) residualB.push({ symbol: b.symbol, usd: remaining, price: b.price });
-        }
-
-        for (const s of residualS) {
-          const qty = usdToAmount(s.usd, s.price);
-          lines.push(`桥接：卖出 ${s.symbol} ${fmt4(qty)} → ${bridge}（≈ $${fmt2(s.usd)}）`);
-        }
-        for (const b of residualB) {
-          const qty = usdToAmount(b.usd, b.price);
-          lines.push(`桥接：用 ${bridge} 购买 ${b.symbol} ${fmt4(qty)}（≈ $${fmt2(b.usd)}）`);
+        for (const b of buyersQ) {
+          if (b.remainingUsd <= 1e-6) continue;
+          const price = priceBySymbol.get(b.symbol) ?? b.price;
+          const qty = usdToAmount(b.remainingUsd, price);
+          lines.push(`桥接：用 ${bridge} 购买 ${b.symbol} ${fmt4(qty)}（≈ $${fmt2(b.remainingUsd)}）`);
         }
 
         if (lines.length === 0) lines.push('已达目标，无需操作。');
