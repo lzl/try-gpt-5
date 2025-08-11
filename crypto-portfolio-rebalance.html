@@ -116,6 +116,7 @@
         gap: 10px;
       }
       .kpi.kpi-2 { grid-template-columns: repeat(2, 1fr); }
+      .kpi.kpi-4 { grid-template-columns: repeat(4, 1fr); }
       .kpi .box {
         background: #0e131a;
         border: 1px solid var(--border);
@@ -194,12 +195,11 @@
 
         <div class="card">
           <h2>市场与汇率</h2>
-          <div class="row small" style="margin-bottom: 8px;">
-            <label>
-              <input id="toggleSplitTotals" type="checkbox" /> 拆分显示现金/非现金总资产
-            </label>
-          </div>
-          <div class="kpi kpi-2" style="margin-bottom: 10px;">
+          <div class="kpi" style="margin-bottom: 10px;">
+            <div class="box">
+              <div class="label">总资产 (BTC)</div>
+              <div class="value" id="totalBtc">—</div>
+            </div>
             <div class="box">
               <div class="label">总资产 (USD)</div>
               <div class="value" id="totalUsd">—</div>
@@ -209,7 +209,11 @@
               <div class="value" id="totalCny">—</div>
             </div>
           </div>
-          <div class="kpi" style="margin-bottom: 10px;">
+          <div class="kpi kpi-4" style="margin-bottom: 10px;">
+            <div class="box">
+              <div class="label">现金资产 (BTC)</div>
+              <div class="value" id="cashBtc">—</div>
+            </div>
             <div class="box">
               <div class="label">现金资产 (USD)</div>
               <div class="value" id="cashUsd">—</div>
@@ -488,7 +492,6 @@
         prices: {}, // { symbol: number|null }
         usdCny: null,
         algoMode: 'bridge', // 'bridge' | 'optimized'
-        splitTotals: false,
         targets: {
           cashPct: 10, // default 10%
           nonCashWeights: {} // { symbol: pct }
@@ -502,7 +505,6 @@
         if (Array.isArray(saved.holdingsRows)) state.holdingsRows = saved.holdingsRows;
         if (saved.algoMode) state.algoMode = saved.algoMode;
         if (saved.targets) state.targets = saved.targets;
-        if (typeof saved.splitTotals === 'boolean') state.splitTotals = saved.splitTotals;
       }
 
       function persist() {
@@ -510,7 +512,6 @@
           holdingsRows: state.holdingsRows,
           algoMode: state.algoMode,
           targets: state.targets,
-          splitTotals: state.splitTotals,
         });
       }
 
@@ -687,11 +688,19 @@
         dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt0(totalUsd)}` : '—';
         const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
         dom('totalCny').textContent = isFinite(cny) ? `¥${fmt0(cny)}` : '—';
+        // Total in BTC
+        const btcPrice = (state.prices && isFinite(state.prices['BTC'])) ? Number(state.prices['BTC']) : NaN;
+        const totalBtc = isFinite(totalUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalUsd / btcPrice) : NaN;
+        const cashBtc = isFinite(totalCashUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalCashUsd / btcPrice) : NaN;
+        const totalBtcEl = dom('totalBtc');
+        if (totalBtcEl) totalBtcEl.textContent = isFinite(totalBtc) ? `${fmt4(totalBtc)}` : '—';
 
         // Row 2: Cash assets (USD/CNY) and ratio
         dom('cashUsd').textContent = isFinite(totalCashUsd) ? `$${fmt0(totalCashUsd)}` : '—';
         const cashCny = isFinite(totalCashUsd) && isFinite(usdCny) ? totalCashUsd * usdCny : NaN;
         dom('cashCny').textContent = isFinite(cashCny) ? `¥${fmt0(cashCny)}` : '—';
+        const cashBtcEl = dom('cashBtc');
+        if (cashBtcEl) cashBtcEl.textContent = isFinite(cashBtc) ? `${fmt4(cashBtc)}` : '—';
         const cashPct = totalUsd > 0 ? totalCashUsd / totalUsd : 0;
         dom('cashPct').textContent = pct(cashPct);
       }
@@ -866,7 +875,8 @@
 
         // Fetch prices if needed
         const aggregated = groupBySymbol(state.holdingsRows);
-        const symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        let symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        if (!symbols.includes('BTC')) symbols.push('BTC');
         if (opts.fetchPrices) {
           const map = await fetchPricesForSymbols(symbols);
           state.prices = Object.fromEntries(map.entries());
@@ -877,8 +887,6 @@
         renderHoldingsTable();
         renderTargetsTable(aggregated);
         renderTargetSum();
-        const splitToggle = dom('toggleSplitTotals');
-        if (splitToggle) splitToggle.checked = !!state.splitTotals;
         dom('lastUpdated').textContent = state.lastUpdated || '—';
         dom('usdCny').textContent = state.usdCny ? fmt4(state.usdCny) : '—';
 
@@ -970,11 +978,7 @@
         }
       });
 
-      dom('toggleSplitTotals')?.addEventListener('change', async (e) => {
-        state.splitTotals = !!e.target.checked;
-        persist();
-        await rerenderAll({ silent: true });
-      });
+      // removed: toggleSplitTotals
 
       dom('algoMode')?.addEventListener('change', async (e) => {
         state.algoMode = e.target.value;
@@ -999,7 +1003,8 @@
         if (rate != null) state.usdCny = rate;
         // Fetch prices for all current symbols
         const aggregated = groupBySymbol(state.holdingsRows);
-        const symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        let symbols = aggregated.map(x => x.symbol).filter(Boolean);
+        if (!symbols.includes('BTC')) symbols.push('BTC');
         const map = await fetchPricesForSymbols(symbols);
         state.prices = Object.fromEntries(map.entries());
         state.lastUpdated = nowTs();
