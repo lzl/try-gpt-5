@@ -542,8 +542,8 @@
         }
 
         tbody.querySelectorAll('input').forEach(el => {
-          el.addEventListener('input', onHoldingsInputChange);
-          el.addEventListener('change', onHoldingsInputChange);
+          el.addEventListener('input', onHoldingsInputImmediate);
+          el.addEventListener('change', onHoldingsInputCommit);
         });
         tbody.querySelectorAll('button[data-k="removeRow"]').forEach(btn => btn.addEventListener('click', onRemoveRow));
       }
@@ -555,7 +555,36 @@
         rerenderAll();
       }
 
-      function onHoldingsInputChange(e) {
+      // Immediate input: update state only and refresh computed views without rebuilding tables
+      function onHoldingsInputImmediate(e) {
+        const i = Number(e.target.getAttribute('data-i'));
+        const key = e.target.getAttribute('data-k');
+        const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+        const row = state.holdingsRows[i];
+        if (!row) return;
+        if (key === 'symbol') {
+          row.symbol = normalizeSymbol(v);
+        } else if (key === 'amount') {
+          row.amount = Number(v) || 0;
+        } else if (key === 'manualPrice') {
+          row.manualPrice = Number(v) || 0;
+        } else if (key === 'manualPriceEnabled') {
+          row.manualPriceEnabled = !!v;
+          // toggle readonly on the manual price input without re-render
+          const idx = i;
+          const manualInput = document.querySelector(`input[data-k="manualPrice"][data-i="${idx}"]`);
+          if (manualInput) {
+            if (row.manualPriceEnabled) manualInput.removeAttribute('readonly');
+            else manualInput.setAttribute('readonly', '');
+          }
+        }
+        persist();
+        // lightweight recompute (KPIs, breakdown, plan)
+        updateComputedViews();
+      }
+
+      // Commit on change/blur: apply state and (if symbol changed) refetch + rebuild
+      function onHoldingsInputCommit(e) {
         const i = Number(e.target.getAttribute('data-i'));
         const key = e.target.getAttribute('data-k');
         const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -603,7 +632,9 @@
         state.targets.nonCashWeights = state.targets.nonCashWeights || {};
         state.targets.nonCashWeights[sym] = v;
         persist();
-        rerenderAll();
+        // Do not re-render the table to avoid losing focus; just update dependent views
+        renderTargetSum();
+        updateComputedViews();
       }
 
       // =============================
@@ -854,6 +885,14 @@
         dom('plan').textContent = (extra.length ? (extra.join('\n') + '\n') : '') + plan.lines.map((x,i)=>`${i+1}. ${x}`).join('\n');
       }
 
+      // Lightweight recompute of KPIs, breakdown and plan without rebuilding inputs tables
+      async function updateComputedViews() {
+        const { per, totalUsd, totalCashUsd, totalNonCashUsd } = computeAggregates();
+        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd);
+        renderNonCashBreakdown(per, totalNonCashUsd);
+        await recomputeAndRenderPlan(per, totalUsd);
+      }
+
       async function rerenderAll(opts = { fetchPrices: false, silent: false }) {
         // Update inputs
         dom('algoMode').value = state.algoMode;
@@ -981,7 +1020,8 @@
         const v = clamp(Number(e.target.value) || 0, 0, 100);
         state.targets.cashPct = v;
         persist();
-        await rerenderAll();
+        // Avoid rebuilding target/holding tables on each keystroke
+        await updateComputedViews();
       });
 
       // =============================
