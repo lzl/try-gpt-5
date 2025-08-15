@@ -211,6 +211,24 @@
           </div>
           <div class="kpi kpi-4" style="margin-bottom: 10px;">
             <div class="box">
+              <div class="label">非现金资产 (BTC)</div>
+              <div class="value" id="nonCashBtc">—</div>
+            </div>
+            <div class="box">
+              <div class="label">非现金资产 (USD)</div>
+              <div class="value" id="nonCashUsd">—</div>
+            </div>
+            <div class="box">
+              <div class="label">非现金资产 (CNY)</div>
+              <div class="value" id="nonCashCny">—</div>
+            </div>
+            <div class="box">
+              <div class="label">非现金占比</div>
+              <div class="value" id="nonCashPct">—</div>
+            </div>
+          </div>
+          <div class="kpi kpi-4" style="margin-bottom: 10px;">
+            <div class="box">
               <div class="label">现金资产 (BTC)</div>
               <div class="value" id="cashBtc">—</div>
             </div>
@@ -692,10 +710,23 @@
         const btcPrice = (state.prices && isFinite(state.prices['BTC'])) ? Number(state.prices['BTC']) : NaN;
         const totalBtc = isFinite(totalUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalUsd / btcPrice) : NaN;
         const cashBtc = isFinite(totalCashUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalCashUsd / btcPrice) : NaN;
+        const nonCashBtc = isFinite(totalNonCashUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalNonCashUsd / btcPrice) : NaN;
         const totalBtcEl = dom('totalBtc');
         if (totalBtcEl) totalBtcEl.textContent = isFinite(totalBtc) ? `${fmt4(totalBtc)}` : '—';
 
-        // Row 2: Cash assets (USD/CNY) and ratio
+        // Row 2: Non-cash assets (USD/CNY) and ratio
+        const nonCashUsdEl = dom('nonCashUsd');
+        if (nonCashUsdEl) nonCashUsdEl.textContent = isFinite(totalNonCashUsd) ? `$${fmt0(totalNonCashUsd)}` : '—';
+        const nonCashCny = isFinite(totalNonCashUsd) && isFinite(usdCny) ? totalNonCashUsd * usdCny : NaN;
+        const nonCashCnyEl = dom('nonCashCny');
+        if (nonCashCnyEl) nonCashCnyEl.textContent = isFinite(nonCashCny) ? `¥${fmt0(nonCashCny)}` : '—';
+        const nonCashBtcEl = dom('nonCashBtc');
+        if (nonCashBtcEl) nonCashBtcEl.textContent = isFinite(nonCashBtc) ? `${fmt4(nonCashBtc)}` : '—';
+        const nonCashPctEl = dom('nonCashPct');
+        const nonCashPct = totalUsd > 0 ? totalNonCashUsd / totalUsd : 0;
+        if (nonCashPctEl) nonCashPctEl.textContent = pct(nonCashPct);
+
+        // Row 3: Cash assets (USD/CNY) and ratio
         dom('cashUsd').textContent = isFinite(totalCashUsd) ? `$${fmt0(totalCashUsd)}` : '—';
         const cashCny = isFinite(totalCashUsd) && isFinite(usdCny) ? totalCashUsd * usdCny : NaN;
         dom('cashCny').textContent = isFinite(cashCny) ? `¥${fmt0(cashCny)}` : '—';
