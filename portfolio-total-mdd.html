@@ -32,6 +32,7 @@
     .right { text-align: right; }
     .total { font-weight: 600; }
     .sep { height: 8px; }
+    .section-title { font-weight: 600; margin: 0 0 8px; }
   </style>
 </head>
 <body>
@@ -84,6 +85,51 @@
     </div>
 
     <div class="panel">
+      <div class="section-title">3) 目标最大回撤与再平衡（长仓、满仓、无杠杆）</div>
+      <div class="row" style="margin-bottom:8px">
+        <div class="chip">约束：权重 ≥ 0，权重之和 = 100%</div>
+        <div class="chip">目标：组合最大回撤 ≤ 目标值</div>
+      </div>
+      <div class="row" style="gap:14px; align-items: flex-end; flex-wrap: wrap">
+        <div>
+          <div class="note">组合最大回撤目标</div>
+          <input id="targetMdd" type="text" placeholder="如 30%" style="width:140px" />
+        </div>
+        <div>
+          <div class="note">组合期望年化收益率</div>
+          <input id="targetReturn" type="text" placeholder="如 8%" style="width:140px" />
+        </div>
+        <div class="grow"></div>
+        <div class="note">收益率预设：</div>
+        <button id="retPresetConservative" class="btn">保守</button>
+        <button id="retPresetBase" class="btn accent">中性</button>
+        <button id="retPresetAggressive" class="btn warn">进取</button>
+      </div>
+
+      <table style="margin-top:10px">
+        <thead>
+          <tr>
+            <th>资产</th>
+            <th>历史平均年化收益率（%）</th>
+          </tr>
+        </thead>
+        <tbody id="tbodyRet">
+          <!-- return rows injected -->
+        </tbody>
+      </table>
+
+      <div class="row" style="margin-top:10px">
+        <button id="solveBtn" class="btn accent">求解最优权重</button>
+        <button id="applyWeightsBtnA" class="btn" disabled>应用方案A权重</button>
+        <button id="applyWeightsBtnB" class="btn" disabled>应用方案B权重</button>
+        <div class="grow"></div>
+        <div id="rbStatus" class="note"></div>
+      </div>
+
+      <div id="rebalanceRes" style="margin-top:10px"></div>
+    </div>
+
+    <div class="panel">
       <div class="note">
         预设（启发式，非承诺）：
         <br>· 保守：现金 0%，债券 10%，权益 35%，加密 60%
@@ -101,6 +147,13 @@
       { key: 'equity', name: '权益',  defaultValue: 0,   defaultMdd: -0.55 },
       { key: 'crypto', name: '加密',  defaultValue: 0,   defaultMdd: -0.80 },
     ];
+
+    // 默认年化收益率预设（可在页面中覆盖）
+    const defaultReturns = {
+      conservative: { cash: 0.015, bonds: 0.03,  equity: 0.06,  crypto: 0.15 },
+      base:         { cash: 0.02,  bonds: 0.04,  equity: 0.075, crypto: 0.25 },
+      aggressive:   { cash: 0.025, bonds: 0.05,  equity: 0.09,  crypto: 0.35 },
+    };
 
     function fmtNum(x, digits = 2) {
       if (!isFinite(x)) return '-';
@@ -135,6 +188,26 @@
       return isFinite(v) ? v : 0;
     }
 
+    // 解析年化收益率输入（允许 7.5, 7.5%, 0.075）
+    function parseRateInput(s) {
+      if (s == null) return NaN;
+      let t = String(s).trim();
+      if (!t) return NaN;
+      const hasPct = t.endsWith('%');
+      if (hasPct) t = t.slice(0, -1).trim();
+      let v = Number(t);
+      if (!isFinite(v)) return NaN;
+      if (hasPct || Math.abs(v) > 1) v = v / 100;
+      return v;
+    }
+
+    // 解析为“幅度”（非负小数），适用于目标回撤
+    function parsePctMagnitude(s) {
+      const v = parseRateInput(s);
+      if (!isFinite(v)) return NaN;
+      return Math.abs(v);
+    }
+
     function el(tag, attrs = {}, children = []) {
       const e = document.createElement(tag);
       for (const [k, v] of Object.entries(attrs)) {
@@ -163,6 +236,20 @@
       }
     }
 
+    function buildReturnTable() {
+      const tbody = document.getElementById('tbodyRet');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      for (const a of assets) {
+        const tr = el('tr');
+        tr.appendChild(el('td', {}, a.name));
+        const inp = el('input', { type: 'text', value: '' });
+        inp.id = `ret_${a.key}`;
+        tr.appendChild(el('td', {}, inp));
+        tbody.appendChild(tr);
+      }
+    }
+
     // ---- Persistence (localStorage) ----
     const STATE_KEY = 'portfolio-total-mdd.v1';
 
@@ -177,7 +264,14 @@
             mdd_raw: mddEl ? mddEl.value : ''
           };
         }
-        const state = { ts: Date.now(), inputs };
+        const returns = {};
+        for (const a of assets) {
+          const retEl = document.getElementById(`ret_${a.key}`);
+          returns[a.key] = retEl ? retEl.value : '';
+        }
+        const targetMdd = document.getElementById('targetMdd')?.value || '';
+        const targetReturn = document.getElementById('targetReturn')?.value || '';
+        const state = { ts: Date.now(), inputs, returns, targetMdd, targetReturn };
         localStorage.setItem(STATE_KEY, JSON.stringify(state));
       } catch (e) {
         // ignore
@@ -195,13 +289,29 @@
     }
 
     function applyState(state) {
-      if (!state || !state.inputs) return;
-      for (const a of assets) {
-        const inp = state.inputs[a.key] || {};
-        const valEl = document.getElementById(`val_${a.key}`);
-        const mddEl = document.getElementById(`mdd_${a.key}`);
-        if (valEl && typeof inp.value_raw === 'string') valEl.value = inp.value_raw;
-        if (mddEl && typeof inp.mdd_raw === 'string') mddEl.value = inp.mdd_raw;
+      if (!state) return;
+      if (state.inputs) {
+        for (const a of assets) {
+          const inp = state.inputs[a.key] || {};
+          const valEl = document.getElementById(`val_${a.key}`);
+          const mddEl = document.getElementById(`mdd_${a.key}`);
+          if (valEl && typeof inp.value_raw === 'string') valEl.value = inp.value_raw;
+          if (mddEl && typeof inp.mdd_raw === 'string') mddEl.value = inp.mdd_raw;
+        }
+      }
+      if (state.returns) {
+        for (const a of assets) {
+          const retEl = document.getElementById(`ret_${a.key}`);
+          if (retEl && typeof state.returns[a.key] === 'string') retEl.value = state.returns[a.key];
+        }
+      }
+      if (typeof state.targetMdd === 'string') {
+        const t = document.getElementById('targetMdd');
+        if (t) t.value = state.targetMdd;
+      }
+      if (typeof state.targetReturn === 'string') {
+        const t2 = document.getElementById('targetReturn');
+        if (t2) t2.value = state.targetReturn;
       }
     }
 
@@ -212,6 +322,12 @@
         if (valEl) valEl.addEventListener('input', () => { calc(); saveState(); });
         if (mddEl) mddEl.addEventListener('input', () => { calc(); saveState(); });
       }
+      for (const a of assets) {
+        const retEl = document.getElementById(`ret_${a.key}`);
+        if (retEl) retEl.addEventListener('input', () => { saveState(); });
+      }
+      const tgt = document.getElementById('targetMdd');
+      if (tgt) tgt.addEventListener('input', () => { saveState(); });
     }
 
     function readInputs() {
@@ -288,6 +404,7 @@
         value_parsed: r.value,
         mdd_raw: r.mddRaw,
         mdd_fraction: r.mdd,
+        mdd_magnitude: isFinite(r.mdd) ? Math.abs(r.mdd) : null,
         loss: r.loss,
         loss_abs: Math.abs(r.loss),
         loss_share_of_total_loss: lossSum !== 0 ? (r.loss / lossSum) : null,
@@ -299,6 +416,97 @@
         total_after: afterSum,
         portfolio_mdd_fraction: portfolioMdd
       };
+      // ---- Rebalance-related debug ----
+      const targetRaw = document.getElementById('targetMdd')?.value || '';
+      const targetMag = parsePctMagnitude(targetRaw);
+      const returnsArr = assets.map(a => {
+        const raw = document.getElementById(`ret_${a.key}`)?.value || '';
+        const parsed = parseRateInput(raw);
+        return { key: a.key, name: a.name, return_raw: raw, return_fraction: isFinite(parsed) ? parsed : null };
+      });
+      const { m, r, idx } = (function(){
+        // Gather only valid pairs for solver
+        const mm = [], rr = [], ii = [];
+        for (let i=0;i<assets.length;i++) {
+          const a = assets[i];
+          const mRaw = document.getElementById(`mdd_${a.key}`)?.value || '';
+          const rRaw = document.getElementById(`ret_${a.key}`)?.value || '';
+          const mi = parsePctMagnitude(mRaw);
+          const ri = parseRateInput(rRaw);
+          if (isFinite(mi) && mi >= 0 && isFinite(ri)) { mm.push(mi); rr.push(ri); ii.push(i); }
+        }
+        return { m: mm, r: rr, idx: ii };
+      })();
+
+      let solA = null;
+      if (isFinite(targetMag) && m.length >= 1) {
+        if (typeof lastSolutionA !== 'undefined' && typeof lastIdxMapA !== 'undefined' && lastSolutionA && lastIdxMapA && Array.isArray(lastSolutionA.weights) && lastIdxMapA.length === idx.length && lastIdxMapA.every((v,k)=>v===idx[k])) {
+          solA = lastSolutionA;
+        } else {
+          solA = solveOptimalWeights(targetMag, m, r);
+        }
+      }
+
+      const targetReturnRaw = document.getElementById('targetReturn')?.value || '';
+      const targetReturn = parseRateInput(targetReturnRaw);
+      let solB = null;
+      if (isFinite(targetReturn) && m.length >= 1) {
+        if (typeof lastSolutionB !== 'undefined' && typeof lastIdxMapB !== 'undefined' && lastSolutionB && lastIdxMapB && Array.isArray(lastSolutionB.weights) && lastIdxMapB.length === idx.length && lastIdxMapB.every((v,k)=>v===idx[k])) {
+          solB = lastSolutionB;
+        } else {
+          solB = solveMinMddForReturn(targetReturn, m, r);
+        }
+      }
+
+      const totalNow = total;
+      const weightsByAssetA = assets.map((a, ai) => {
+        if (!solA || !solA.weights) return { key: a.key, weight: null, amount: null };
+        const solverIdx = idx.indexOf(ai);
+        const w = solverIdx >= 0 ? (solA.weights[solverIdx] || 0) : 0;
+        return { key: a.key, weight: w, amount: totalNow * w };
+      });
+      payload.rebalance = {
+        target_mdd_raw: targetRaw,
+        target_mdd_fraction: isFinite(targetMag) ? targetMag : null,
+        target_return_raw: targetReturnRaw,
+        target_return_fraction: isFinite(targetReturn) ? targetReturn : null,
+        returns: returnsArr,
+        solver_input: {
+          mdd_magnitudes: m,
+          expected_returns: r,
+          asset_index_map: idx.map(i => assets[i].key)
+        },
+        solutionA_max_return_under_m: (function(){
+          const s = solA;
+          if (!s) return null;
+          return {
+            feasible: !!s.feasible,
+            exact: !!s.exact,
+            reason: s.reason || null,
+            achieved_mdd: s.achievedM,
+            expected_return: s.expectedR,
+            weights_by_solver_index: s.weights || [],
+            used_solver_idx: s.used || [],
+            used_assets: (s.used || []).map(i => assets[idx[i]].key)
+          };
+        })(),
+        solutionB_min_m_for_target_return: (function(){
+          const s = solB;
+          if (!s) return null;
+          return {
+            feasible: !!s.feasible,
+            exact: !!s.exact,
+            reason: s.reason || null,
+            achieved_mdd: s.achievedM,
+            expected_return: s.expectedR,
+            weights_by_solver_index: s.weights || [],
+            used_solver_idx: s.used || [],
+            used_assets: (s.used || []).map(i => assets[idx[i]].key)
+          };
+        })(),
+        weights_by_asset_A: weightsByAssetA
+      };
+
       return JSON.stringify(payload, null, 2);
     }
 
@@ -349,11 +557,230 @@
       saveState();
     }
 
+    // 读取当前总资产
+    function getCurrentTotal() {
+      const rows = readInputs();
+      return rows.reduce((s, r) => s + r.value, 0);
+    }
+
+    // 读取每类资产的回撤幅度(>=0)与预期收益率
+    function readMagsAndReturns() {
+      const m = [], r = [], idx = [];
+      for (let i=0;i<assets.length;i++) {
+        const a = assets[i];
+        const mRaw = document.getElementById(`mdd_${a.key}`)?.value || '';
+        const rRaw = document.getElementById(`ret_${a.key}`)?.value || '';
+        const mi = parsePctMagnitude(mRaw);
+        const ri = parseRateInput(rRaw);
+        if (isFinite(mi) && mi >= 0 && isFinite(ri)) {
+          m.push(mi); r.push(ri); idx.push(i);
+        }
+      }
+      return { m, r, idx };
+    }
+
+    // 线性规划极点解：两资产组合达到目标回撤，并最大化收益
+    function solveOptimalWeights(targetMag, m, r) {
+      const n = m.length; const EPS = 1e-10;
+      if (n === 0) return { feasible: false, reason: '缺少有效的最大回撤输入' };
+      if (!isFinite(targetMag) || targetMag < 0) return { feasible: false, reason: '目标最大回撤不合法' };
+
+      let minM = Infinity, maxM = -Infinity;
+      for (const x of m) { if (x < minM) minM = x; if (x > maxM) maxM = x; }
+
+      // 单资产恰好等于目标
+      for (let i=0;i<n;i++) {
+        if (Math.abs(m[i] - targetMag) < EPS) {
+          const w = new Array(n).fill(0); w[i] = 1;
+          return { feasible: true, exact: true, weights: w, achievedM: m[i], expectedR: r[i], used: [i] };
+        }
+      }
+
+      // 任意两资产组合
+      let best = null;
+      for (let i=0;i<n;i++) for (let j=i+1;j<n;j++) {
+        const denom = (m[i] - m[j]);
+        if (Math.abs(denom) < EPS) continue;
+        const wi = (targetMag - m[j]) / denom;
+        const wj = 1 - wi;
+        if (wi >= -EPS && wi <= 1+EPS && wj >= -EPS && wj <= 1+EPS) {
+          const wiC = Math.max(0, Math.min(1, wi));
+          const wjC = 1 - wiC; // enforce sum=1 in [0,1]
+          const rp = wiC * r[i] + wjC * r[j];
+          const sol = { feasible: true, exact: true, weights: (()=>{const arr=new Array(n).fill(0); arr[i]=wiC; arr[j]=wjC; return arr;})(), achievedM: targetMag, expectedR: rp, used: [i,j] };
+          if (!best || rp > best.expectedR + EPS) best = sol;
+        }
+      }
+      if (best) return best;
+
+      // 目标小于最小可实现回撤：选择最小回撤资产（收益最高的那个）
+      if (targetMag < minM - EPS) {
+        let candIdx = 0; let bestR = -Infinity;
+        for (let i=0;i<n;i++) if (m[i] === minM && r[i] > bestR) { bestR = r[i]; candIdx = i; }
+        const w = new Array(n).fill(0); w[candIdx] = 1;
+        return { feasible: false, reason: '目标小于可实现最小回撤（无 0% 风险资产或全部资产风险高于目标）', weights: w, achievedM: m[candIdx], expectedR: r[candIdx], used: [candIdx] };
+      }
+      // 目标大于最大可实现回撤：选择收益最高资产（风险低于目标，无法等式达成）
+      if (targetMag > maxM + EPS) {
+        let candIdx = 0; let bestR = -Infinity;
+        for (let i=0;i<n;i++) if (r[i] > bestR) { bestR = r[i]; candIdx = i; }
+        const w = new Array(n).fill(0); w[candIdx] = 1;
+        return { feasible: true, exact: false, reason: '目标高于可实现最大回撤；已给出收益最高的边界解（风险≤目标）', weights: w, achievedM: m[candIdx], expectedR: r[candIdx], used: [candIdx] };
+      }
+
+      return { feasible: false, reason: '无法找到满足目标的权重组合' };
+    }
+
+    // 在收益率目标约束下，寻找“最小回撤”的方案
+    function solveMinMddForReturn(targetR, m, r) {
+      const n = m.length; const EPS = 1e-10;
+      if (n === 0) return { feasible: false, reason: '缺少有效输入' };
+      if (!isFinite(targetR)) return { feasible: false, reason: '收益率目标不合法' };
+
+      // 单资产可满足收益目标时，回撤最小者最优
+      let bestSingle = null;
+      for (let i=0;i<n;i++) {
+        if (r[i] >= targetR - EPS) {
+          if (!bestSingle || m[i] < bestSingle.achievedM - EPS) {
+            bestSingle = { feasible: true, exact: true, weights: (()=>{const w=new Array(n).fill(0); w[i]=1; return w;})(), achievedM: m[i], expectedR: r[i], used: [i] };
+          }
+        }
+      }
+
+      // 枚举两资产，使 r 约束等式成立，取回撤最小者
+      let bestPair = null;
+      for (let i=0;i<n;i++) for (let j=i+1;j<n;j++) {
+        const denom = (r[i] - r[j]);
+        if (Math.abs(denom) < EPS) continue;
+        const wi = (targetR - r[j]) / denom;
+        const wj = 1 - wi;
+        if (wi >= -EPS && wi <= 1+EPS && wj >= -EPS && wj <= 1+EPS) {
+          const wiC = Math.max(0, Math.min(1, wi));
+          const wjC = 1 - wiC;
+          const mAch = wiC*m[i] + wjC*m[j];
+          const rAch = wiC*r[i] + wjC*r[j];
+          const sol = { feasible: true, exact: true, weights: (()=>{const w=new Array(n).fill(0); w[i]=wiC; w[j]=wjC; return w;})(), achievedM: mAch, expectedR: rAch, used: [i,j] };
+          if (!bestPair || mAch < bestPair.achievedM - EPS) bestPair = sol;
+        }
+      }
+
+      let best = null;
+      if (bestSingle && bestPair) best = (bestSingle.achievedM <= bestPair.achievedM) ? bestSingle : bestPair;
+      else best = bestSingle || bestPair;
+      if (best) return best;
+
+      // 若目标收益率超过了所有单资产与任意两资产可混合的上界（实际上等于超过最大 r[i]），则不可行
+      let maxR = -Infinity, maxIdx = 0;
+      for (let i=0;i<n;i++) if (r[i] > maxR) { maxR = r[i]; maxIdx = i; }
+      const w = new Array(n).fill(0); w[maxIdx] = 1;
+      return { feasible: false, reason: '收益率目标超过可实现上限（无杠杆条件下）', weights: w, achievedM: m[maxIdx], expectedR: r[maxIdx], used: [maxIdx] };
+    }
+
+    function renderSolutionCard(tag, sol, idxMap, noteLines = []) {
+      const total = getCurrentTotal();
+      const wByAsset = new Array(assets.length).fill(0);
+      for (let k=0;k<idxMap.length;k++) wByAsset[idxMap[k]] = sol.weights[k] || 0;
+      const rows = assets.map((a, ai) => ({ name: a.name, w: wByAsset[ai]||0, amt: total*(wByAsset[ai]||0) }));
+      const sumW = rows.reduce((s,x)=>s+x.w,0);
+      const achM = sol.achievedM; const expR = sol.expectedR;
+      const feasibility = sol.exact ? '（等式达成）' : '（边界解）';
+      const notes = [
+        `${feasibility}`,
+        ...(sol.reason ? [sol.reason] : []),
+        ...noteLines
+      ].filter(Boolean);
+      return `
+        <div class="panel">
+          <div class="section-title">${tag}</div>
+          <table>
+            <thead><tr><th>资产</th><th>权重</th><th>金额</th></tr></thead>
+            <tbody>
+              ${rows.map(r=>`<tr><td>${r.name}</td><td>${fmtPct(r.w)}</td><td>${fmtNum(r.amt)}</td></tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr class="total"><td>合计</td><td class="right">${fmtPct(sumW)}</td><td class="right">${fmtNum(total)}</td></tr>
+            </tfoot>
+          </table>
+          <div class="chips" style="margin-top:8px">
+            <div class="chip">组合回撤：${fmtPct(achM)}</div>
+            <div class="chip">组合预期年化收益：${fmtPct(expR)}</div>
+          </div>
+          ${notes.length ? `<div class="note" style="margin-top:6px">${notes.join('<br>')}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderRebalanceDual(solA, idxA, solB, idxB, targetMag, targetR) {
+      const box = document.getElementById('rebalanceRes');
+      let html = '';
+      const EPS = 1e-10;
+      if (solA && solA.weights) {
+        const meetsReturn = solA.expectedR >= targetR - EPS;
+        const tag = meetsReturn ? '方案A：满足“回撤≤目标、收益≥目标”的最优方案（最大化收益）' : '方案A：在回撤约束下的最大收益（未达到收益目标）';
+        const notes = [`目标回撤：${fmtPct(targetMag)}，方案A回撤：${fmtPct(solA.achievedM)}，收益：${fmtPct(solA.expectedR)}`];
+        html += renderSolutionCard(tag, solA, idxA, notes);
+        const btnA = document.getElementById('applyWeightsBtnA');
+        if (btnA) btnA.disabled = false;
+      }
+      if (solB && solB.weights) {
+        const feasibleUnderM = solB.achievedM <= targetMag + EPS;
+        const tag = feasibleUnderM ? '方案B：达到收益目标的最小回撤方案（可行）' : '方案B：达到收益目标的最小回撤方案（超出回撤目标，不可行）';
+        const notes = [`收益目标：${fmtPct(targetR)}，方案B回撤：${fmtPct(solB.achievedM)}，收益：${fmtPct(solB.expectedR)}`];
+        html += renderSolutionCard(tag, solB, idxB, notes);
+        const btnB = document.getElementById('applyWeightsBtnB');
+        if (btnB) btnB.disabled = !feasibleUnderM;
+      }
+      box.innerHTML = html;
+    }
+
+    let lastSolutionA = null, lastIdxMapA = null;
+    let lastSolutionB = null, lastIdxMapB = null;
+
+    function onSolve() {
+      const targetMRaw = document.getElementById('targetMdd')?.value || '';
+      const targetRRaw = document.getElementById('targetReturn')?.value || '';
+      const targetMag = parsePctMagnitude(targetMRaw);
+      const targetR = parseRateInput(targetRRaw);
+      if (!isFinite(targetMag)) { document.getElementById('rbStatus').textContent = '请输入有效的目标最大回撤（如 30% 或 0.3）'; return; }
+      if (!isFinite(targetR)) { document.getElementById('rbStatus').textContent = '请输入有效的期望年化收益率（如 8% 或 0.08）'; return; }
+      const { m, r, idx } = readMagsAndReturns();
+      if (m.length < 1) { document.getElementById('rbStatus').textContent = '请先完善各资产的最大回撤与收益率输入'; return; }
+      const solA = solveOptimalWeights(targetMag, m, r);
+      const solB = solveMinMddForReturn(targetR, m, r);
+      lastSolutionA = solA; lastIdxMapA = idx;
+      lastSolutionB = solB; lastIdxMapB = idx;
+      renderRebalanceDual(solA, idx, solB, idx, targetMag, targetR);
+      let msg = '';
+      if (!solA.feasible) msg += (solA.reason || '在回撤约束下不可行') + '。 ';
+      if (!solB.feasible) msg += (solB.reason || '收益目标不可行') + '。';
+      document.getElementById('rbStatus').textContent = msg;
+      saveState();
+    }
+
+    function onApplyWeightsA() { if (lastSolutionA && lastIdxMapA) applyWeightsToValues(lastSolutionA, lastIdxMapA); }
+    function onApplyWeightsB() { if (lastSolutionB && lastIdxMapB) applyWeightsToValues(lastSolutionB, lastIdxMapB); }
+
+    function setReturnPreset(type) {
+      const preset = defaultReturns[type] || defaultReturns.base;
+      for (const a of assets) {
+        const el = document.getElementById(`ret_${a.key}`);
+        if (el && preset[a.key] != null) el.value = fmtPct(preset[a.key]);
+      }
+      saveState();
+    }
+
     // init
     buildTable();
+    buildReturnTable();
     // try restore state then compute
     const restored = loadState();
     if (restored) applyState(restored);
+    else {
+      // 初始收益率采用中性预设，目标回撤默认 30%
+      setReturnPreset('base');
+      const t = document.getElementById('targetMdd');
+      if (t) t.value = '30%';
+    }
     attachInputListeners();
     calc();
     document.getElementById('calcBtn').addEventListener('click', () => { calc(); saveState(); });
@@ -362,6 +789,13 @@
     document.getElementById('presetExtreme').addEventListener('click', () => setPreset('extreme'));
     document.getElementById('resetBtn').addEventListener('click', resetValues);
     document.getElementById('debugBtn').addEventListener('click', copyDebug);
+    // rebalance wiring
+    document.getElementById('retPresetConservative').addEventListener('click', () => setReturnPreset('conservative'));
+    document.getElementById('retPresetBase').addEventListener('click', () => setReturnPreset('base'));
+    document.getElementById('retPresetAggressive').addEventListener('click', () => setReturnPreset('aggressive'));
+    document.getElementById('solveBtn').addEventListener('click', onSolve);
+    document.getElementById('applyWeightsBtnA').addEventListener('click', onApplyWeightsA);
+    document.getElementById('applyWeightsBtnB').addEventListener('click', onApplyWeightsB);
   </script>
 </body>
 </html>
