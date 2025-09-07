@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>投资组合最大回撤（情景估算）</title>
+  <meta name="description" content="输入现金/债券/权益/加密货币的现有资产数值与各自可能的最大回撤（假设），估算组合层面的最大回撤；附带历史启发式预设。" />
+  <style>
+    :root {
+      --bg: #0e1116; --panel:#141925; --text:#e6edf3; --muted:#93a1b1; --border:#2d3748; --accent:#3fb950; --warn:#f85149; --chip:#1f2635;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Inter, Helvetica, Arial, PingFang SC, Noto Sans SC, "微软雅黑", sans-serif; }
+    .container { max-width: 880px; margin: 28px auto 56px; padding: 0 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
+    .subtitle { color: var(--muted); margin-bottom: 12px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin: 14px 0; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .grow { flex: 1 1 auto; }
+    .btn { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: #182036; color: var(--text); cursor: pointer; }
+    .btn.accent { background: #16331e; border-color: #245c38; color: #c9f7d0; }
+    .btn.warn { background: #341a1a; border-color: #5c2a2a; color: #ffd7d4; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 10px; border-bottom: 1px solid var(--border); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    input[type="text"] { width: 120px; height: 34px; border-radius: 8px; border: 1px solid var(--border); background: #0f1522; color: var(--text); padding: 0 10px; font-size: 14px; }
+    .chip { background: var(--chip); padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+    .muted { color: var(--muted); }
+    .good { color: var(--accent); }
+    .bad { color: var(--warn); }
+    .note { font-size: 12px; color: var(--muted); }
+    .right { text-align: right; }
+    .total { font-weight: 600; }
+    .sep { height: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>投资组合最大回撤（情景估算）</h1>
+    <div class="subtitle">输入各资产当前数值与“可能发生的最大回撤”（假设），估算组合层面最大回撤。默认假设同时发生，属保守情景。</div>
+
+    <div class="panel">
+      <div class="row">
+        <div class="chip">单位可为任意货币，保持一致即可</div>
+        <div class="chip">回撤可输入 50%、-50、0.5 等等</div>
+        <div class="grow"></div>
+        <button id="presetConservative" class="btn">预设：保守</button>
+        <button id="presetBase" class="btn accent">预设：历史严重</button>
+        <button id="presetExtreme" class="btn warn">预设：极端</button>
+      </div>
+      <div class="sep"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>资产</th>
+            <th>当前数值</th>
+            <th>最大回撤（%）</th>
+            <th>回撤金额</th>
+            <th>对组合回撤贡献</th>
+            <th>回撤后数值</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <!-- rows injected -->
+        </tbody>
+        <tfoot>
+          <tr class="total">
+            <td>合计</td>
+            <td id="sumValue" class="right">-</td>
+            <td class="right muted">—</td>
+            <td id="sumLoss" class="right">-</td>
+            <td id="sumShare" class="right">-</td>
+            <td id="sumAfter" class="right">-</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <button id="calcBtn" class="btn accent">计算组合最大回撤</button>
+        <button id="resetBtn" class="btn">清空数值</button>
+        <div class="grow"></div>
+        <div id="status" class="note"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="note">
+        预设（启发式，非承诺）：
+        <br>· 保守：现金 0%，债券 10%，权益 35%，加密 60%
+        <br>· 历史严重：现金 0%，债券 20%，权益 55%，加密 80%
+        <br>· 极端：现金 1%，债券 35%，权益 65%，加密 90%
+        <br>说明：不同国家/期限/指数口径差异很大，上述范围仅为历史区间的简化近似，用于情景压力测试，实际以您的资产标的为准。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const assets = [
+      { key: 'cash',   name: '现金',  defaultValue: 0,   defaultMdd: 0.00 },
+      { key: 'bonds',  name: '债券',  defaultValue: 0,   defaultMdd: -0.20 },
+      { key: 'equity', name: '权益',  defaultValue: 0,   defaultMdd: -0.55 },
+      { key: 'crypto', name: '加密',  defaultValue: 0,   defaultMdd: -0.80 },
+    ];
+
+    function fmtNum(x, digits = 2) {
+      if (!isFinite(x)) return '-';
+      const abs = Math.abs(x);
+      const d = abs >= 1000 ? 0 : digits;
+      return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: d }).format(x);
+    }
+    function fmtPct(x, digits = 2) {
+      if (!isFinite(x)) return '-';
+      return (x * 100).toFixed(digits) + '%';
+    }
+
+    function parsePctInput(s) {
+      // Accept: 50, -50, 50%, -50%, 0.5, -0.5. Return negative fraction (e.g., -0.5)
+      if (s == null) return NaN;
+      let t = String(s).trim();
+      if (!t) return NaN;
+      const hasPct = t.endsWith('%');
+      if (hasPct) t = t.slice(0, -1).trim();
+      let v = Number(t);
+      if (!isFinite(v)) return NaN;
+      // If user typed 50, interpret as 50% drop
+      if (!hasPct && Math.abs(v) > 1) v = v / 100;
+      // Ensure it is negative (drop)
+      if (v > 0) v = -v;
+      return v;
+    }
+
+    function parseNum(s) {
+      if (s == null) return 0;
+      const v = Number(String(s).replace(/,/g, '').trim());
+      return isFinite(v) ? v : 0;
+    }
+
+    function el(tag, attrs = {}, children = []) {
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else e.setAttribute(k, v);
+      }
+      for (const c of [].concat(children)) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      return e;
+    }
+
+    function buildTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      for (const a of assets) {
+        const tr = el('tr');
+        tr.appendChild(el('td', {}, a.name));
+        const inpVal = el('input', { type: 'text', value: a.defaultValue ? String(a.defaultValue) : '' });
+        inpVal.id = `val_${a.key}`;
+        tr.appendChild(el('td', {}, inpVal));
+        const inpMdd = el('input', { type: 'text', value: a.defaultMdd ? fmtPct(Math.abs(a.defaultMdd)) : '' });
+        inpMdd.id = `mdd_${a.key}`;
+        tr.appendChild(el('td', {}, inpMdd));
+        tr.appendChild(el('td', { id: `loss_${a.key}` }, '-'));
+        tr.appendChild(el('td', { id: `share_${a.key}` }, '-'));
+        tr.appendChild(el('td', { id: `after_${a.key}` }, '-'));
+        tbody.appendChild(tr);
+      }
+    }
+
+    function readInputs() {
+      const rows = assets.map(a => {
+        const v = parseNum(document.getElementById(`val_${a.key}`).value);
+        const p = parsePctInput(document.getElementById(`mdd_${a.key}`).value);
+        return { key: a.key, name: a.name, value: v, mdd: p };
+      });
+      return rows;
+    }
+
+    function calc() {
+      const rows = readInputs();
+      const total = rows.reduce((s, r) => s + r.value, 0);
+      if (total <= 0) {
+        document.getElementById('status').textContent = '请先输入各资产的当前数值。';
+      } else {
+        document.getElementById('status').textContent = '';
+      }
+      const losses = rows.map(r => ({ ...r, loss: isFinite(r.mdd) ? r.value * (-Math.abs(r.mdd)) : 0 }));
+      const lossSum = losses.reduce((s, r) => s + r.loss, 0); // negative number or 0
+      const afterSum = total + lossSum;
+      const portfolioMdd = total > 0 ? (lossSum / total) : 0; // negative fraction
+
+      for (const r of losses) {
+        const loss = r.loss; // <= 0
+        const share = lossSum !== 0 ? (loss / lossSum) : 0; // positive percentage of total loss
+        document.getElementById(`loss_${r.key}`).textContent = fmtNum(loss);
+        document.getElementById(`share_${r.key}`).textContent = lossSum !== 0 ? fmtPct(share) : '-';
+        document.getElementById(`after_${r.key}`).textContent = fmtNum(r.value + loss);
+      }
+
+      document.getElementById('sumValue').textContent = fmtNum(total);
+      document.getElementById('sumLoss').textContent = fmtNum(lossSum);
+      document.getElementById('sumShare').textContent = fmtPct(portfolioMdd);
+      document.getElementById('sumAfter').textContent = fmtNum(afterSum);
+    }
+
+    function setPreset(type) {
+      let p;
+      if (type === 'conservative') {
+        p = { cash: 0.00, bonds: -0.10, equity: -0.35, crypto: -0.60 };
+      } else if (type === 'base') {
+        p = { cash: 0.00, bonds: -0.20, equity: -0.55, crypto: -0.80 };
+      } else if (type === 'extreme') {
+        p = { cash: -0.01, bonds: -0.35, equity: -0.65, crypto: -0.90 };
+      }
+      for (const a of assets) {
+        const v = p[a.key];
+        document.getElementById(`mdd_${a.key}`).value = v === 0 ? '0%' : fmtPct(Math.abs(v));
+      }
+      calc();
+    }
+
+    function resetValues() {
+      for (const a of assets) {
+        document.getElementById(`val_${a.key}`).value = '';
+      }
+      calc();
+    }
+
+    // init
+    buildTable();
+    document.getElementById('calcBtn').addEventListener('click', calc);
+    document.getElementById('presetConservative').addEventListener('click', () => setPreset('conservative'));
+    document.getElementById('presetBase').addEventListener('click', () => setPreset('base'));
+    document.getElementById('presetExtreme').addEventListener('click', () => setPreset('extreme'));
+    document.getElementById('resetBtn').addEventListener('click', resetValues);
+  </script>
+</body>
+</html>
+
