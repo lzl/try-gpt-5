@@ -77,6 +77,7 @@
       <div class="row" style="margin-top:10px">
         <button id="calcBtn" class="btn accent">计算组合最大回撤</button>
         <button id="resetBtn" class="btn">清空数值</button>
+        <button id="debugBtn" class="btn">Debug：复制关键数据</button>
         <div class="grow"></div>
         <div id="status" class="note"></div>
       </div>
@@ -198,6 +199,78 @@
       document.getElementById('sumAfter').textContent = fmtNum(afterSum);
     }
 
+    function buildDebugPayload() {
+      const payload = {
+        tool: 'portfolio-total-mdd',
+        version: 1,
+        timestamp: new Date().toISOString(),
+        assumption: 'simultaneous_per-asset_max_drawdown',
+        assets: []
+      };
+      // read raw inputs and parsed numbers
+      const rows = assets.map(a => {
+        const valEl = document.getElementById(`val_${a.key}`);
+        const mddEl = document.getElementById(`mdd_${a.key}`);
+        const valueRaw = valEl ? valEl.value : '';
+        const mddRaw = mddEl ? mddEl.value : '';
+        const value = parseNum(valueRaw);
+        const mdd = parsePctInput(mddRaw); // negative fraction if valid
+        return { key: a.key, name: a.name, valueRaw, mddRaw, value, mdd };
+      });
+
+      const total = rows.reduce((s, r) => s + (isFinite(r.value) ? r.value : 0), 0);
+      const losses = rows.map(r => ({
+        ...r,
+        loss: isFinite(r.mdd) ? r.value * (-Math.abs(r.mdd)) : 0,
+        after: isFinite(r.mdd) ? r.value * (1 - Math.abs(r.mdd)) : r.value
+      }));
+      const lossSum = losses.reduce((s, r) => s + r.loss, 0);
+      const afterSum = total + lossSum;
+      const portfolioMdd = total > 0 ? (lossSum / total) : 0;
+
+      payload.assets = losses.map(r => ({
+        key: r.key,
+        name: r.name,
+        value_raw: r.valueRaw,
+        value_parsed: r.value,
+        mdd_raw: r.mddRaw,
+        mdd_fraction: r.mdd,
+        loss: r.loss,
+        loss_abs: Math.abs(r.loss),
+        loss_share_of_total_loss: lossSum !== 0 ? (r.loss / lossSum) : null,
+        after_value: r.after
+      }));
+      payload.totals = {
+        total_value: total,
+        total_loss: lossSum,
+        total_after: afterSum,
+        portfolio_mdd_fraction: portfolioMdd
+      };
+      return JSON.stringify(payload, null, 2);
+    }
+
+    async function copyDebug() {
+      const text = buildDebugPayload();
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.left = '-10000px';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        document.getElementById('status').textContent = 'Debug 数据已复制到剪贴板。';
+      } catch (e) {
+        document.getElementById('status').textContent = '复制失败：' + e.message;
+      }
+    }
+
     function setPreset(type) {
       let p;
       if (type === 'conservative') {
@@ -228,7 +301,7 @@
     document.getElementById('presetBase').addEventListener('click', () => setPreset('base'));
     document.getElementById('presetExtreme').addEventListener('click', () => setPreset('extreme'));
     document.getElementById('resetBtn').addEventListener('click', resetValues);
+    document.getElementById('debugBtn').addEventListener('click', copyDebug);
   </script>
 </body>
 </html>
-
