@@ -122,8 +122,8 @@
       if (hasPct) t = t.slice(0, -1).trim();
       let v = Number(t);
       if (!isFinite(v)) return NaN;
-      // If user typed 50, interpret as 50% drop
-      if (!hasPct && Math.abs(v) > 1) v = v / 100;
+      // If input carried a % sign, convert to fraction. If no %, but magnitude > 1, also treat as percent.
+      if (hasPct) v = v / 100; else if (Math.abs(v) > 1) v = v / 100;
       // Ensure it is negative (drop)
       if (v > 0) v = -v;
       return v;
