@@ -163,6 +163,57 @@
       }
     }
 
+    // ---- Persistence (localStorage) ----
+    const STATE_KEY = 'portfolio-total-mdd.v1';
+
+    function saveState() {
+      try {
+        const inputs = {};
+        for (const a of assets) {
+          const valEl = document.getElementById(`val_${a.key}`);
+          const mddEl = document.getElementById(`mdd_${a.key}`);
+          inputs[a.key] = {
+            value_raw: valEl ? valEl.value : '',
+            mdd_raw: mddEl ? mddEl.value : ''
+          };
+        }
+        const state = { ts: Date.now(), inputs };
+        localStorage.setItem(STATE_KEY, JSON.stringify(state));
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function loadState() {
+      try {
+        const s = localStorage.getItem(STATE_KEY);
+        if (!s) return null;
+        return JSON.parse(s);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function applyState(state) {
+      if (!state || !state.inputs) return;
+      for (const a of assets) {
+        const inp = state.inputs[a.key] || {};
+        const valEl = document.getElementById(`val_${a.key}`);
+        const mddEl = document.getElementById(`mdd_${a.key}`);
+        if (valEl && typeof inp.value_raw === 'string') valEl.value = inp.value_raw;
+        if (mddEl && typeof inp.mdd_raw === 'string') mddEl.value = inp.mdd_raw;
+      }
+    }
+
+    function attachInputListeners() {
+      for (const a of assets) {
+        const valEl = document.getElementById(`val_${a.key}`);
+        const mddEl = document.getElementById(`mdd_${a.key}`);
+        if (valEl) valEl.addEventListener('input', () => { calc(); saveState(); });
+        if (mddEl) mddEl.addEventListener('input', () => { calc(); saveState(); });
+      }
+    }
+
     function readInputs() {
       const rows = assets.map(a => {
         const v = parseNum(document.getElementById(`val_${a.key}`).value);
@@ -197,6 +248,8 @@
       document.getElementById('sumLoss').textContent = fmtNum(lossSum);
       document.getElementById('sumShare').textContent = fmtPct(portfolioMdd);
       document.getElementById('sumAfter').textContent = fmtNum(afterSum);
+      // auto-save after calc
+      saveState();
     }
 
     function buildDebugPayload() {
@@ -285,6 +338,7 @@
         document.getElementById(`mdd_${a.key}`).value = v === 0 ? '0%' : fmtPct(Math.abs(v));
       }
       calc();
+      saveState();
     }
 
     function resetValues() {
@@ -292,11 +346,17 @@
         document.getElementById(`val_${a.key}`).value = '';
       }
       calc();
+      saveState();
     }
 
     // init
     buildTable();
-    document.getElementById('calcBtn').addEventListener('click', calc);
+    // try restore state then compute
+    const restored = loadState();
+    if (restored) applyState(restored);
+    attachInputListeners();
+    calc();
+    document.getElementById('calcBtn').addEventListener('click', () => { calc(); saveState(); });
     document.getElementById('presetConservative').addEventListener('click', () => setPreset('conservative'));
     document.getElementById('presetBase').addEventListener('click', () => setPreset('base'));
     document.getElementById('presetExtreme').addEventListener('click', () => setPreset('extreme'));
