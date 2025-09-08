@@ -682,7 +682,12 @@
           if (isCash(a.symbol)) totalCashUsd += value; else totalNonCashUsd += value;
           per.push({ symbol: a.symbol, amount: a.amount, price, value, isCash: isCash(a.symbol) });
         }
-        return { per, totalUsd, totalCashUsd, totalNonCashUsd };
+        // BTC price used for BTC-denominated KPIs should respect manual override
+        const btcEntry = per.find(x => x.symbol === 'BTC');
+        const btcPriceForConversion = (btcEntry && isFinite(btcEntry.price) && btcEntry.price > 0)
+          ? Number(btcEntry.price)
+          : ((prices && isFinite(prices['BTC'])) ? Number(prices['BTC']) : NaN);
+        return { per, totalUsd, totalCashUsd, totalNonCashUsd, btcPriceForConversion };
       }
 
       function renderNonCashBreakdown(per, totalNonCashUsd) {
@@ -701,13 +706,15 @@
         }
       }
 
-      function renderKpis(totalUsd, usdCny, totalCashUsd, totalNonCashUsd) {
+      function renderKpis(totalUsd, usdCny, totalCashUsd, totalNonCashUsd, btcPriceForConversion) {
         // Row 1: Total assets (USD/CNY)
         dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt0(totalUsd)}` : '—';
         const cny = isFinite(totalUsd) && isFinite(usdCny) ? totalUsd * usdCny : NaN;
         dom('totalCny').textContent = isFinite(cny) ? `¥${fmt0(cny)}` : '—';
-        // Total in BTC
-        const btcPrice = (state.prices && isFinite(state.prices['BTC'])) ? Number(state.prices['BTC']) : NaN;
+        // Total in BTC (respect manual BTC price if provided)
+        const btcPrice = (isFinite(btcPriceForConversion) && btcPriceForConversion > 0)
+          ? btcPriceForConversion
+          : ((state.prices && isFinite(state.prices['BTC'])) ? Number(state.prices['BTC']) : NaN);
         const totalBtc = isFinite(totalUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalUsd / btcPrice) : NaN;
         const cashBtc = isFinite(totalCashUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalCashUsd / btcPrice) : NaN;
         const nonCashBtc = isFinite(totalNonCashUsd) && isFinite(btcPrice) && btcPrice > 0 ? (totalNonCashUsd / btcPrice) : NaN;
@@ -893,8 +900,8 @@
 
       // Lightweight recompute of KPIs, breakdown and plan without rebuilding inputs tables
       async function updateComputedViews() {
-        const { per, totalUsd, totalCashUsd, totalNonCashUsd } = computeAggregates();
-        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd);
+        const { per, totalUsd, totalCashUsd, totalNonCashUsd, btcPriceForConversion } = computeAggregates();
+        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd, btcPriceForConversion);
         renderNonCashBreakdown(per, totalNonCashUsd);
         await recomputeAndRenderPlan(per, totalUsd);
       }
@@ -922,8 +929,8 @@
         dom('usdCny').textContent = state.usdCny ? fmt4(state.usdCny) : '—';
 
         // Compute aggregates
-        const { per, totalUsd, totalCashUsd, totalNonCashUsd } = computeAggregates();
-        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd);
+        const { per, totalUsd, totalCashUsd, totalNonCashUsd, btcPriceForConversion } = computeAggregates();
+        renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd, btcPriceForConversion);
         renderNonCashBreakdown(per, totalNonCashUsd);
 
         // Plan
@@ -1057,5 +1064,4 @@
     </script>
   </body>
 </html>
-
 
