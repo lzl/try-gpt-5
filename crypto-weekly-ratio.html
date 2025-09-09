@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>每周加密货币关系价格 (B/A)</title>
+    <style>
+      :root {
+        --bg: #0f1218;
+        --panel: #151a23;
+        --muted: #8b97a8;
+        --text: #e8eef7;
+        --accent: #4ea1ff;
+        --border: #232b36;
+        --row: #0e131a;
+        --danger: #ff5c5c;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .container { max-width: 1200px; margin: 24px auto 80px; padding: 0 16px; }
+      h1 { font-size: 22px; font-weight: 700; margin: 0 0 12px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .spacer { flex: 1; }
+      input, button { background: #0e131a; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+      button { cursor: pointer; }
+      button.primary { background: var(--accent); border-color: transparent; }
+      .muted { color: var(--muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .small { font-size: 12px; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+      table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
+      thead th { font-weight: 600; color: var(--muted); font-size: 12px; text-align: left; padding: 0 8px 4px; }
+      tbody tr { background: var(--row); }
+      tbody td { padding: 10px 8px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+      tbody tr td:first-child { border-left: 1px solid var(--border); border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+      tbody tr td:last-child { border-right: 1px solid var(--border); border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+      .right { text-align: right; }
+      .error { color: var(--danger); }
+      .soft { background: #0b0f14; border: 1px dashed var(--border); border-radius: 10px; padding: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>每周加密货币关系价格</h1>
+
+      <div class="card" style="margin-bottom: 14px;">
+        <div class="row" style="gap: 12px;">
+          <div class="pill">数据源优先级：CoinCap → CryptoCompare（公共接口，无需密钥）</div>
+          <div class="spacer"></div>
+          <div class="small muted">关系价格定义：B/A（如 ETH/BTC）</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 14px;">
+        <div class="row" style="gap: 12px;">
+          <label>加密货币 A（简称）<input id="symA" value="BTC" size="8" placeholder="如 BTC" /></label>
+          <label>加密货币 B（简称）<input id="symB" value="ETH" size="8" placeholder="如 ETH" /></label>
+          <button id="btnFetch" class="primary">获取数据</button>
+          <div class="spacer"></div>
+          <div class="small muted">日期按周聚合（周一作为周起始），按日期降序排列。</div>
+        </div>
+        <div id="status" class="small muted" style="margin-top: 8px;">—</div>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>周（周一起始）</th>
+              <th id="thA">A 价格 (USD)</th>
+              <th id="thB">B 价格 (USD)</th>
+              <th class="right">关系价格 B/A</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="small muted" style="margin-top: 10px;">
+        提示：接口为公共服务，若偶发失败或频率受限，请稍后重试；计算以同一周内两者同一天（优先周一）价格为准。
+      </div>
+    </div>
+
+    <script>
+      const dom = (id) => document.getElementById(id);
+      const fmt2 = (n) => isFinite(n) ? Number(n).toFixed(2) : '—';
+      const fmt6 = (n) => isFinite(n) ? Number(n).toFixed(6) : '—';
+
+      // =============== 时间/日期（UTC）工具 ===============
+      const toISODateUTC = (ts) => {
+        const d = new Date(ts);
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const da = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${da}`;
+      };
+      const parseISODateToUTC = (iso) => {
+        const [y, m, d] = iso.split('-').map(Number);
+        return Date.UTC(y, m - 1, d);
+      };
+      function startOfISOWeekUTC(ts) {
+        const d = new Date(ts);
+        const dow = d.getUTCDay(); // 0=Sun..6=Sat
+        const isoDow = dow === 0 ? 7 : dow; // 1..7, 1=Mon
+        const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - (isoDow - 1));
+        return start;
+      }
+      function listWeekDatesUTC(weekStartTs) {
+        // Monday..Sunday
+        const arr = [];
+        for (let i = 0; i < 7; i++) arr.push(toISODateUTC(weekStartTs + i * 86400000));
+        return arr;
+      }
+
+      // =============== 数据源 1：CoinCap（优先） ===============
+      async function coincapSearchIdBySymbol(symbol) {
+        const sym = String(symbol).trim().toUpperCase();
+        const url = `https://api.coincap.io/v2/assets?search=${encodeURIComponent(sym)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('CoinCap 搜索失败');
+        const data = await res.json();
+        const list = data?.data || [];
+        // 优先精确符号匹配
+        const exact = list.find(x => String(x.symbol).toUpperCase() === sym);
+        if (exact) return exact.id;
+        // 次选：第一条（通常为市值靠前者）
+        if (list.length > 0) return list[0].id;
+        throw new Error(`未找到币种：${sym}`);
+      }
+      async function coincapFetchDailyUSD(id) {
+        // 全历史：从 2010-01-01 到当前
+        const start = Date.UTC(2010, 0, 1);
+        const end = Date.now();
+        const url = `https://api.coincap.io/v2/assets/${encodeURIComponent(id)}/history?interval=d1&start=${start}&end=${end}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('CoinCap 历史价格获取失败');
+        const json = await res.json();
+        const arr = json?.data || [];
+        // 返回 {dateISO: price}
+        const map = new Map();
+        for (const it of arr) {
+          const ts = typeof it.time === 'number' ? it.time : Date.parse(it.date);
+          const iso = toISODateUTC(ts);
+          const p = Number(it.priceUsd);
+          if (isFinite(p)) map.set(iso, p);
+        }
+        if (map.size === 0) throw new Error('CoinCap 历史价格为空');
+        return map;
+      }
+
+      // =============== 数据源 2：CryptoCompare（回退） ===============
+      async function ccFetchDailyUSD(symbol) {
+        // 循环向前翻页拿足够长的历史（每次最多 2000 天）
+        const sym = String(symbol).trim().toUpperCase();
+        let toTs = Math.floor(Date.now() / 1000);
+        const map = new Map();
+        for (let i = 0; i < 6; i++) { // 6×2000 ≈ 12000 天，> 32 年
+          const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${encodeURIComponent(sym)}&tsym=USD&limit=2000&toTs=${toTs}`;
+          const res = await fetch(url);
+          if (!res.ok) break;
+          const json = await res.json();
+          const ok = json?.Response === 'Success' && Array.isArray(json?.Data?.Data);
+          if (!ok) break;
+          const rows = json.Data.Data;
+          if (!rows.length) break;
+          for (const r of rows) {
+            if (r.time == null) continue;
+            // 取收盘价（close）
+            const p = Number(r.close);
+            if (!isFinite(p) || p <= 0) continue;
+            const iso = toISODateUTC(r.time * 1000);
+            map.set(iso, p);
+          }
+          const earliest = rows[0]?.time;
+          if (!earliest) break;
+          toTs = earliest - 1; // 下一轮继续更早
+          // 若已经到非常早的时间点，则退出
+          if (toTs < Math.floor(Date.UTC(2010,0,1)/1000)) break;
+        }
+        if (map.size === 0) throw new Error('CryptoCompare 历史价格为空');
+        return map;
+      }
+
+      async function getDailyUSDSeries(symbol) {
+        // 返回 Map<YYYY-MM-DD, price>
+        // 先 CoinCap；失败再 CryptoCompare
+        try {
+          const id = await coincapSearchIdBySymbol(symbol);
+          return await coincapFetchDailyUSD(id);
+        } catch (e1) {
+          console.warn('CoinCap 失败，尝试 CryptoCompare：', e1);
+          return await ccFetchDailyUSD(symbol);
+        }
+      }
+
+      // =============== 周聚合（同周同一天，优先周一） ===============
+      function weeklySync(seriesA, seriesB) {
+        // seriesA/B: Map<ISO, price>
+        // 输出：按周（周一）对齐；每周挑选同一天（如果周一双方都有，则用周一，否则周内从周一到周日找首个双方都存在的日期）
+        const daysA = new Set(seriesA.keys());
+        const daysB = new Set(seriesB.keys());
+
+        // 收集双方出现过的所有周（以周一时间戳为键）
+        const weeks = new Set();
+        for (const d of daysA) weeks.add(startOfISOWeekUTC(parseISODateToUTC(d)));
+        for (const d of daysB) weeks.add(startOfISOWeekUTC(parseISODateToUTC(d)));
+
+        const rows = [];
+        for (const wStart of weeks) {
+          const list = listWeekDatesUTC(wStart); // Mon..Sun
+          // 寻找双方同日
+          let pick = null;
+          for (const day of list) {
+            if (daysA.has(day) && daysB.has(day)) { pick = day; break; }
+          }
+          if (!pick) continue; // 该周双方无同日
+          const pa = seriesA.get(pick);
+          const pb = seriesB.get(pick);
+          if (!isFinite(pa) || !isFinite(pb) || pa <= 0) continue;
+          rows.push({ weekStart: wStart, day: pick, a: pa, b: pb, ratio: pb / pa });
+        }
+        // 按周起始降序
+        rows.sort((x, y) => y.weekStart - x.weekStart);
+        return rows;
+      }
+
+      // =============== 渲染 ===============
+      function setStatus(msg, isError = false) {
+        const el = dom('status');
+        el.textContent = msg;
+        el.className = `small ${isError ? 'error' : 'muted'}`;
+      }
+      function renderTable(rows, symA, symB) {
+        dom('thA').textContent = `${symA} 价格 (USD)`;
+        dom('thB').textContent = `${symB} 价格 (USD)`;
+        const tbody = dom('tbody');
+        tbody.innerHTML = '';
+        for (const r of rows) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${toISODateUTC(r.weekStart)} <span class="muted small">(${r.day})</span></td>
+            <td class="mono">${fmt2(r.a)}</td>
+            <td class="mono">${fmt2(r.b)}</td>
+            <td class="mono right">${fmt6(r.ratio)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+        if (rows.length === 0) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td colspan="4" class="muted center">无数据</td>`;
+          tbody.appendChild(tr);
+        }
+      }
+
+      async function onFetch() {
+        const symA = String(dom('symA').value || '').trim().toUpperCase();
+        const symB = String(dom('symB').value || '').trim().toUpperCase();
+        if (!symA || !symB) { setStatus('请输入币种简称，例如：BTC、ETH', true); return; }
+        if (symA === symB) { setStatus('A 与 B 不能相同', true); return; }
+        setStatus(`正在获取 ${symA} 与 ${symB} 历史数据（可能需数秒）…`);
+        dom('tbody').innerHTML = '';
+
+        try {
+          const [sa, sb] = await Promise.all([
+            getDailyUSDSeries(symA),
+            getDailyUSDSeries(symB)
+          ]);
+          const rows = weeklySync(sa, sb);
+          renderTable(rows, symA, symB);
+          setStatus(`完成：共 ${rows.length} 条周数据。`);
+        } catch (e) {
+          console.error(e);
+          setStatus(`获取失败：${e?.message || e}`, true);
+        }
+      }
+
+      document.getElementById('btnFetch').addEventListener('click', onFetch);
+      // 首次加载自动拉取默认 BTC/ETH
+      onFetch();
+    </script>
+  </body>
+  </html>
+
