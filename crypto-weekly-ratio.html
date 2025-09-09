@@ -415,7 +415,8 @@
 
         // 清空“加载中...”占位
         el.innerHTML = '';
-        Plotly.newPlot(el, [ratioTrace, aTrace, bTrace], layout, config);
+        // 顺序：A(USD)、B(USD)、B/A；最后的 B/A 置顶便于观察
+        Plotly.newPlot(el, [aTrace, bTrace, ratioTrace], layout, config);
       }
 
       // 依据开关更新坐标轴刻度
