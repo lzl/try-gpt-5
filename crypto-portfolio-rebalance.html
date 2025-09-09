@@ -63,6 +63,8 @@
       }
       .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
       .spacer { flex: 1; }
+      .topbar .actions { display: flex; gap: 10px; align-items: center; }
+      .topbar .actions > * { white-space: nowrap; }
 
       button, input, select {
         background: #0e131a;
@@ -153,18 +155,22 @@
       <h1>Crypto Portfolio Rebalance</h1>
 
       <div class="card">
-        <div class="row">
+        <div class="row topbar">
           <div class="pill">数据源：Binance 价格，open.er-api/jsdelivr/floatrates 汇率</div>
           <div class="pill">货币：USD/USDT，汇率 USD→CNY</div>
+          <div class="actions">
+            <label class="row small">
+              <span class="muted">算法:</span>
+              <select id="algoMode">
+                <option value="bridge">USDT 桥接（稳健）</option>
+                <option value="optimized">直达配对优先（贪心）</option>
+              </select>
+            </label>
+            <button id="btnRefresh" class="ghost">刷新价格/汇率</button>
+            <button id="btnExport" class="ghost" title="导出配置" aria-label="导出配置">导出配置</button>
+            <button id="btnImport" class="ghost" title="导入配置" aria-label="导入配置">导入配置</button>
+          </div>
           <div class="spacer"></div>
-          <label class="row small">
-            <span class="muted">算法:</span>
-            <select id="algoMode">
-              <option value="bridge">USDT 桥接（稳健）</option>
-              <option value="optimized">直达配对优先（贪心）</option>
-            </select>
-          </label>
-          <button id="btnRefresh" class="ghost">刷新价格/汇率</button>
         </div>
       </div>
 
@@ -1016,6 +1022,63 @@
         }
       });
 
+      // Export/Import configuration via clipboard
+      dom('btnExport')?.addEventListener('click', async () => {
+        try {
+          const saved = loadState() ?? { holdingsRows: state.holdingsRows, algoMode: state.algoMode, targets: state.targets };
+          const json = JSON.stringify(saved, null, 2);
+          try {
+            await navigator.clipboard.writeText(json);
+          } catch {
+            const ta = document.createElement('textarea');
+            ta.value = json; document.body.appendChild(ta); ta.select();
+            document.execCommand('copy'); ta.remove();
+          }
+          alert('已导出配置到剪贴板');
+        } catch (e) {
+          console.warn('Export failed', e);
+          alert('导出失败：' + (e?.message || '未知错误'));
+        }
+      });
+
+      dom('btnImport')?.addEventListener('click', async () => {
+        try {
+          let text = '';
+          try {
+            text = await navigator.clipboard.readText();
+          } catch {
+            text = prompt('粘贴配置 JSON：') || '';
+          }
+          if (!text.trim()) { alert('剪贴板为空或无内容'); return; }
+          let obj;
+          try { obj = JSON.parse(text); } catch (e) {
+            alert('剪贴板内容不是有效的 JSON');
+            return;
+          }
+          // Accept either direct state, or wrapped as { [LS_KEY]: state }
+          const candidate = (obj && typeof obj === 'object' && (obj.holdingsRows || obj.targets || obj.algoMode))
+            ? obj
+            : (obj && typeof obj === 'object' && obj[LS_KEY] && typeof obj[LS_KEY] === 'object')
+              ? obj[LS_KEY]
+              : null;
+          if (!candidate) { alert('找不到有效的配置字段'); return; }
+
+          // Basic shape guard
+          if (!Array.isArray(candidate.holdingsRows) || !candidate.targets) {
+            if (!confirm('配置结构不完整，仍要导入并尝试恢复吗？')) return;
+          }
+
+          try { localStorage.setItem(LS_KEY, JSON.stringify(candidate)); } catch {}
+          // Reload state and rerender
+          restore();
+          await refreshMarketData(true);
+          alert('已从剪贴板导入配置');
+        } catch (e) {
+          console.warn('Import failed', e);
+          alert('导入失败：' + (e?.message || '未知错误'));
+        }
+      });
+
       // removed: toggleSplitTotals
 
       dom('algoMode')?.addEventListener('change', async (e) => {
@@ -1064,4 +1127,3 @@
     </script>
   </body>
 </html>
-
