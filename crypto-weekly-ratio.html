@@ -47,7 +47,7 @@
 
       <div class="card" style="margin-bottom: 14px;">
         <div class="row" style="gap: 12px;">
-          <div class="pill">数据源优先级：CoinCap → CryptoCompare（公共接口，无需密钥）</div>
+          <div class="pill">数据源优先级：CryptoCompare → CoinCap（公共接口，无需密钥）</div>
           <div class="spacer"></div>
           <div class="small muted">关系价格定义：B/A（如 ETH/BTC）</div>
         </div>
@@ -158,7 +158,7 @@
         let toTs = Math.floor(Date.now() / 1000);
         const map = new Map();
         for (let i = 0; i < 6; i++) { // 6×2000 ≈ 12000 天，> 32 年
-          const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${encodeURIComponent(sym)}&tsym=USD&limit=2000&toTs=${toTs}`;
+          const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${encodeURIComponent(sym)}&tsym=USD&limit=2000&toTs=${toTs}&extraParams=crypto-weekly-ratio`;
           const res = await fetch(url);
           if (!res.ok) break;
           const json = await res.json();
@@ -184,15 +184,26 @@
         return map;
       }
 
+      let COINCAP_ENABLED = true;
+      // 在 file:// 打开时，CoinCap 常见 CORS/404，直接禁用
+      if (typeof location !== 'undefined' && location.protocol === 'file:') COINCAP_ENABLED = false;
+
       async function getDailyUSDSeries(symbol) {
         // 返回 Map<YYYY-MM-DD, price>
-        // 先 CoinCap；失败再 CryptoCompare
+        // 优先 CryptoCompare；若失败且允许则回退 CoinCap
         try {
-          const id = await coincapSearchIdBySymbol(symbol);
-          return await coincapFetchDailyUSD(id);
-        } catch (e1) {
-          console.warn('CoinCap 失败，尝试 CryptoCompare：', e1);
           return await ccFetchDailyUSD(symbol);
+        } catch (eCC) {
+          console.warn('CryptoCompare 失败，考虑回退 CoinCap：', eCC);
+          if (!COINCAP_ENABLED) throw eCC;
+          try {
+            const id = await coincapSearchIdBySymbol(symbol);
+            return await coincapFetchDailyUSD(id);
+          } catch (eCC2) {
+            // 首次 CoinCap 失败后，整个会话禁用，避免重复 404
+            COINCAP_ENABLED = false;
+            throw eCC2;
+          }
         }
       }
 
