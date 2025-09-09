@@ -67,6 +67,8 @@
           <label>加密货币 B（简称）<input id="symB" value="ETH" size="8" placeholder="如 ETH" /></label>
           <button id="btnFetch" class="ghost">获取数据</button>
           <div class="spacer"></div>
+          <label class="small"><input type="checkbox" id="chkLogRatio" /> 比值对数</label>
+          <label class="small"><input type="checkbox" id="chkLogUSD" /> USD 对数</label>
           <div class="small muted">日期按周聚合（周一作为周起始），按日期降序排列。</div>
         </div>
         <div id="status" class="small muted" style="margin-top: 8px;">—</div>
@@ -324,8 +326,14 @@
         }
 
         const x = dataAsc.map(r => new Date(r.weekStart));
-        const yRatio = dataAsc.map(r => (isFinite(r.ratio) ? r.ratio : null));
+        const yRatioRaw = dataAsc.map(r => (isFinite(r.ratio) ? r.ratio : null));
+        const yA = dataAsc.map(r => (isFinite(r.a) ? r.a : null));
+        const yB = dataAsc.map(r => (isFinite(r.b) ? r.b : null));
         const custom = dataAsc.map(r => [r.a, r.b, r.day || null]);
+
+        // 与表格一致：对过小比值进行放大（仅展示层面）
+        const { scale, label } = scaleForRatios(yRatioRaw.filter(v => isFinite(v) && v > 0));
+        const yRatio = yRatioRaw.map(v => (isFinite(v) ? v * scale : null));
 
         const ratioTrace = {
           type: 'scatter',
@@ -335,8 +343,34 @@
           y: yRatio,
           customdata: custom,
           line: { color: '#4ea1ff', width: 2 },
-          hovertemplate: '%{x|%Y-%m-%d}<br>B/A：%{y:.6f}<br>' +
-            `${symA}：$%{customdata[0]:,.2f}<br>${symB}：$%{customdata[1]:,.2f}<extra></extra>`
+          hovertemplate: '%{x|%Y-%m-%d}<br>'+
+            `B/A（显示）: %{y:.6f}${label ? ' '+label : ''}<br>`+
+            'B/A（原始）: %{customdata[2]:.6f}<br>'+
+            `${symA}: $%{customdata[0]:,.2f}<br>${symB}: $%{customdata[1]:,.2f}<extra></extra>`
+        };
+
+        // 修正上面 hover 中原始比值显示：通过 separate trace customdata 提供 raw ratio
+        ratioTrace.customdata = dataAsc.map(r => [r.a, r.b, r.ratio]);
+
+        const aTrace = {
+          type: 'scatter',
+          mode: 'lines',
+          name: `${symA} (USD)`,
+          x,
+          y: yA,
+          yaxis: 'y2',
+          line: { color: '#7bd88f', width: 1.5 },
+          hovertemplate: '%{x|%Y-%m-%d}<br>'+`${symA}: $%{y:,.2f}<extra></extra>`
+        };
+        const bTrace = {
+          type: 'scatter',
+          mode: 'lines',
+          name: `${symB} (USD)`,
+          x,
+          y: yB,
+          yaxis: 'y2',
+          line: { color: '#f7b267', width: 1.5 },
+          hovertemplate: '%{x|%Y-%m-%d}<br>'+`${symB}: $%{y:,.2f}<extra></extra>`
         };
 
         const layout = {
@@ -353,10 +387,20 @@
             titlefont: { color: '#8b97a8' }
           },
           yaxis: {
-            title: '关系价格 B/A',
+            title: `关系价格 B/A${label}`,
             gridcolor: '#232b36',
             tickfont: { color: '#8b97a8' },
-            titlefont: { color: '#8b97a8' }
+            titlefont: { color: '#8b97a8' },
+            type: dom('chkLogRatio')?.checked ? 'log' : 'linear'
+          },
+          yaxis2: {
+            title: '价格 (USD)',
+            overlaying: 'y',
+            side: 'right',
+            gridcolor: 'rgba(0,0,0,0)',
+            tickfont: { color: '#8b97a8' },
+            titlefont: { color: '#8b97a8' },
+            type: dom('chkLogUSD')?.checked ? 'log' : 'linear'
           },
           paper_bgcolor: 'rgba(0,0,0,0)',
           plot_bgcolor: 'rgba(0,0,0,0)'
@@ -369,7 +413,34 @@
           scrollZoom: false
         };
 
-        Plotly.newPlot(el, [ratioTrace], layout, config);
+        // 清空“加载中...”占位
+        el.innerHTML = '';
+        Plotly.newPlot(el, [ratioTrace, aTrace, bTrace], layout, config);
+      }
+
+      // 依据开关更新坐标轴刻度
+      function bindChartToggles() {
+        const el = dom('ratioChart');
+        const chkR = dom('chkLogRatio');
+        const chkU = dom('chkLogUSD');
+        const apply = () => {
+          if (!window.Plotly || !el || !el.data) return;
+          const updates = {
+            'yaxis.type': chkR?.checked ? 'log' : 'linear',
+            'yaxis2.type': chkU?.checked ? 'log' : 'linear'
+          };
+          Plotly.relayout(el, updates);
+        };
+        if (chkR && !chkR.dataset.bound) {
+          chkR.addEventListener('change', apply);
+          chkR.dataset.bound = '1';
+        }
+        if (chkU && !chkU.dataset.bound) {
+          chkU.addEventListener('change', apply);
+          chkU.dataset.bound = '1';
+        }
+        // 初次绑定时即刻应用当前开关状态
+        apply();
       }
 
       async function onFetch() {
@@ -391,12 +462,17 @@
           const rows = weeklySync(sa, sb);
           renderTable(rows, symA, symB);
           renderChart(rows, symA, symB);
+          bindChartToggles();
           setStatus(`完成：共 ${rows.length} 条周数据。`);
         } catch (e) {
           console.error(e);
           setStatus(`获取失败：${e?.message || e}`, true);
           // 异常时清空图表
-          if (window.Plotly && dom('ratioChart')) Plotly.purge(dom('ratioChart'));
+          const el = dom('ratioChart');
+          if (window.Plotly && el && el.classList.contains('js-plotly-plot')) {
+            Plotly.purge(el);
+          }
+          if (el) el.innerHTML = '';
         }
       }
 
