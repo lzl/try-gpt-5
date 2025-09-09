@@ -46,6 +46,8 @@
       .error { color: var(--danger); }
       .soft { background: #0b0f14; border: 1px dashed var(--border); border-radius: 10px; padding: 10px; }
     </style>
+    <!-- 交互式可视化：Plotly（支持框选缩放与双击重置） -->
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   </head>
   <body>
     <div class="container">
@@ -71,6 +73,8 @@
       </div>
 
       <div class="card">
+        <!-- 图表容器（在表格上方） -->
+        <div id="ratioChart" style="height: 360px; margin-bottom: 12px;"></div>
         <table>
           <thead>
             <tr>
@@ -303,6 +307,71 @@
         }
       }
 
+      // =============== 图表渲染 ===============
+      function renderChart(rows, symA, symB) {
+        const el = dom('ratioChart');
+        if (!Array.isArray(rows)) rows = [];
+        // 升序显示（从早到晚）
+        const dataAsc = [...rows].sort((a, b) => a.weekStart - b.weekStart);
+
+        if (!dataAsc.length) {
+          // 清空图表并显示占位提示
+          if (window.Plotly && el) {
+            Plotly.purge(el);
+            el.innerHTML = '<div class="small muted">暂无数据可绘制</div>';
+          }
+          return;
+        }
+
+        const x = dataAsc.map(r => new Date(r.weekStart));
+        const yRatio = dataAsc.map(r => (isFinite(r.ratio) ? r.ratio : null));
+        const custom = dataAsc.map(r => [r.a, r.b, r.day || null]);
+
+        const ratioTrace = {
+          type: 'scatter',
+          mode: 'lines',
+          name: `${symB}/${symA}`,
+          x,
+          y: yRatio,
+          customdata: custom,
+          line: { color: '#4ea1ff', width: 2 },
+          hovertemplate: '%{x|%Y-%m-%d}<br>B/A：%{y:.6f}<br>' +
+            `${symA}：$%{customdata[0]:,.2f}<br>${symB}：$%{customdata[1]:,.2f}<extra></extra>`
+        };
+
+        const layout = {
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          dragmode: 'zoom',
+          showlegend: true,
+          legend: { orientation: 'h', x: 0, y: 1.1 },
+          xaxis: {
+            title: '周（周一起始）',
+            type: 'date',
+            rangeslider: { visible: false },
+            gridcolor: '#232b36',
+            tickfont: { color: '#8b97a8' },
+            titlefont: { color: '#8b97a8' }
+          },
+          yaxis: {
+            title: '关系价格 B/A',
+            gridcolor: '#232b36',
+            tickfont: { color: '#8b97a8' },
+            titlefont: { color: '#8b97a8' }
+          },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+
+        const config = {
+          responsive: true,
+          displaylogo: false,
+          doubleClick: 'reset',
+          scrollZoom: false
+        };
+
+        Plotly.newPlot(el, [ratioTrace], layout, config);
+      }
+
       async function onFetch() {
         const symA = String(dom('symA').value || '').trim().toUpperCase();
         const symB = String(dom('symB').value || '').trim().toUpperCase();
@@ -310,6 +379,9 @@
         if (symA === symB) { setStatus('A 与 B 不能相同', true); return; }
         setStatus(`正在获取 ${symA} 与 ${symB} 历史数据（可能需数秒）…`);
         dom('tbody').innerHTML = '';
+        // 清空/占位图表
+        const chartEl = dom('ratioChart');
+        if (chartEl) chartEl.innerHTML = '<div class="small muted">加载中…</div>';
 
         try {
           const [sa, sb] = await Promise.all([
@@ -318,10 +390,13 @@
           ]);
           const rows = weeklySync(sa, sb);
           renderTable(rows, symA, symB);
+          renderChart(rows, symA, symB);
           setStatus(`完成：共 ${rows.length} 条周数据。`);
         } catch (e) {
           console.error(e);
           setStatus(`获取失败：${e?.message || e}`, true);
+          // 异常时清空图表
+          if (window.Plotly && dom('ratioChart')) Plotly.purge(dom('ratioChart'));
         }
       }
 
