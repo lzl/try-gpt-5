@@ -71,7 +71,7 @@
               <th>周（周一起始）</th>
               <th id="thA">A 价格 (USD)</th>
               <th id="thB">B 价格 (USD)</th>
-              <th class="right">关系价格 B/A</th>
+              <th class="right" id="thRatio">关系价格 B/A</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -87,6 +87,7 @@
       const dom = (id) => document.getElementById(id);
       const fmt2 = (n) => isFinite(n) ? Number(n).toFixed(2) : '—';
       const fmt6 = (n) => isFinite(n) ? Number(n).toFixed(6) : '—';
+      const fmt3 = (n) => isFinite(n) ? Number(n).toFixed(3) : '—';
 
       // =============== 时间/日期（UTC）工具 ===============
       const toISODateUTC = (ts) => {
@@ -232,18 +233,47 @@
         el.textContent = msg;
         el.className = `small ${isError ? 'error' : 'muted'}`;
       }
+      function scaleForRatios(ratios) {
+        // 目标：将中位数放入 [0.01, 100] 区间；返回 {scale, label}
+        if (!ratios.length) return { scale: 1, label: '' };
+        const sorted = [...ratios].sort((a,b)=>a-b).filter(Number.isFinite);
+        const mid = sorted.length ? sorted[Math.floor(sorted.length/2)] : NaN;
+        let scale = 1;
+        if (isFinite(mid) && mid > 0) {
+          const targetLo = 1e-2;
+          if (mid < targetLo) {
+            const k = Math.ceil(Math.log10(targetLo / mid));
+            scale = Math.pow(10, Math.min(12, Math.max(0, k)));
+          }
+        }
+        // 规范到常见档位，便于理解
+        const steps = [1, 1e3, 1e4, 1e6, 1e8, 1e9, 1e12];
+        let chosen = 1;
+        for (const s of steps) { if (scale >= s) chosen = s; }
+        const label = chosen === 1 ? '' : `（已放大 ×${chosen.toLocaleString('en-US')}）`;
+        return { scale: chosen, label };
+      }
+
       function renderTable(rows, symA, symB) {
         dom('thA').textContent = `${symA} 价格 (USD)`;
         dom('thB').textContent = `${symB} 价格 (USD)`;
         const tbody = dom('tbody');
         tbody.innerHTML = '';
+        // 自动放大过小比值（仅显示层面）
+        const ratios = rows.map(r => r.ratio).filter(x => isFinite(x) && x > 0);
+        const { scale, label } = scaleForRatios(ratios);
+        const thRatio = dom('thRatio');
+        thRatio.textContent = `关系价格 B/A${label}`;
+
         for (const r of rows) {
           const tr = document.createElement('tr');
+          const shown = isFinite(r.ratio) ? r.ratio * scale : NaN;
+          const shownStr = shown >= 1 ? fmt3(shown) : fmt6(shown);
           tr.innerHTML = `
             <td>${toISODateUTC(r.weekStart)} <span class="muted small">(${r.day})</span></td>
             <td class="mono">${fmt2(r.a)}</td>
             <td class="mono">${fmt2(r.b)}</td>
-            <td class="mono right">${fmt6(r.ratio)}</td>
+            <td class="mono right" title="原始=${fmt6(r.ratio)}">${shownStr}</td>
           `;
           tbody.appendChild(tr);
         }
@@ -282,4 +312,3 @@
     </script>
   </body>
   </html>
-
