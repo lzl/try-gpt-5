@@ -280,8 +280,10 @@
           const tr = document.createElement('tr');
           const shown = isFinite(r.ratio) ? r.ratio * scale : NaN;
           const shownStr = shown >= 1 ? fmt3(shown) : fmt6(shown);
+          const wk = toISODateUTC(r.weekStart);
+          const dayExtra = (r.day && r.day !== wk) ? ` <span class="muted small">(对齐 ${r.day})</span>` : '';
           tr.innerHTML = `
-            <td>${toISODateUTC(r.weekStart)} <span class="muted small">(${r.day})</span></td>
+            <td>${wk}${dayExtra}</td>
             <td class="mono">${fmt2(r.a)}</td>
             <td class="mono">${fmt2(r.b)}</td>
             <td class="mono right" title="原始=${fmt6(r.ratio)}">${shownStr}</td>
