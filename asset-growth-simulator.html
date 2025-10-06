@@ -642,7 +642,11 @@
       const finalMedian = medianPath[medianPath.length - 1];
       const cumulativeReturn = (finalMedian - initial) / initial;
       const annualizedReturn = Math.pow(finalMedian / initial, 1 / YEARS) - 1;
-      const maxDrawdown = computeMaxDrawdown(medianPath);
+      
+      // 计算每条路径的最大回撤，然后取中位数
+      const allDrawdowns = paths.map(path => computeMaxDrawdown(path)).sort((a, b) => a - b);
+      const maxDrawdown = allDrawdowns[Math.floor(allDrawdowns.length / 2)];
+      
       const avgRebalances = rebalanceCounts.reduce((a, b) => a + b, 0) / rebalanceCounts.length;
 
       const normalizedWeights = normalizeAllocations(state.allocations);
@@ -776,7 +780,7 @@
         { label: '最终资产（中位数）', value: `¥${fmt(metrics.finalMedian)}`, class: 'good' },
         { label: '累计收益率', value: fmtPct(metrics.cumulativeReturn), class: metrics.cumulativeReturn > 0 ? 'good' : 'warn' },
         { label: '年化收益率', value: fmtPct(metrics.annualizedReturn), class: metrics.annualizedReturn > 0 ? 'good' : 'warn' },
-        { label: '最大回撤（中位数路径）', value: fmtPct(metrics.maxDrawdown), class: 'warn' },
+        { label: '最大回撤（中位数）', value: fmtPct(metrics.maxDrawdown), class: 'warn' },
         { label: '平均再平衡次数', value: fmt(metrics.avgRebalances, 1) },
         { label: '最坏情况（10%分位）', value: `¥${fmt(metrics.final10)}` },
         { label: '最好情况（90%分位）', value: `¥${fmt(metrics.final90)}` },
