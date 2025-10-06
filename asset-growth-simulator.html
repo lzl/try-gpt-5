@@ -381,6 +381,31 @@
       </div>
 
       <div class="sep"></div>
+      <h2>提款策略</h2>
+      <div class="row" style="margin-bottom: 12px;">
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input type="checkbox" id="withdrawalEnabled" style="width: auto; height: auto; margin-right: 8px;" />
+          <span style="font-weight: 600;">启用动态提款模拟</span>
+        </label>
+      </div>
+      <div id="withdrawalControls" style="display: none;">
+        <div class="grid-2" style="margin-bottom: 12px;">
+          <div>
+            <label style="display: block; margin-bottom: 6px; font-weight: 600;">基准提款率（%）</label>
+            <input type="number" id="baseWithdrawalRate" min="0.1" max="10" step="0.1" value="4.0" />
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 6px; font-weight: 600;">调整灵敏度</label>
+            <input type="number" id="withdrawalSensitivity" min="0" max="1" step="0.1" value="0.5" />
+          </div>
+        </div>
+        <div class="note">
+          启用后模拟每年从资产中提取生活费用，金额根据收益情况动态调整。
+          灵敏度0表示固定提款，1表示强烈响应收益变化。
+        </div>
+      </div>
+
+      <div class="sep"></div>
       <div class="row">
         <button id="btnSimulate" class="btn accent" style="padding: 0 24px; height: 42px; font-size: 15px;">开始模拟</button>
         <div class="grow"></div>
@@ -402,6 +427,17 @@
       </div>
       <div class="note">
         说明：中位数线代表50%概率情况；阴影区域为25%-75%置信区间；虚线为确定性模拟（无波动）参考线。
+      </div>
+    </div>
+
+    <!-- 提款图表面板 -->
+    <div class="panel" id="withdrawalChartPanel" style="display: none;">
+      <h2>年度提款金额模拟</h2>
+      <div class="chart-container">
+        <canvas id="withdrawalChart"></canvas>
+      </div>
+      <div class="note">
+        说明：柱状图展示每年提款金额的中位数和25%-75%置信区间。提款金额根据上年收益动态调整。
       </div>
     </div>
   </div>
@@ -451,10 +487,14 @@
       rebalanceStrategy: 'annual',
       rebalanceThreshold: 10,
       simCount: 1000,
+      withdrawalEnabled: false,
+      baseWithdrawalRate: 4.0,
+      withdrawalSensitivity: 0.5,
       results: null,
     };
 
     let chartInstance = null;
+    let withdrawalChartInstance = null;
 
     // =============================
     // 工具函数
@@ -481,6 +521,9 @@
           rebalanceStrategy: state.rebalanceStrategy,
           rebalanceThreshold: state.rebalanceThreshold,
           simCount: state.simCount,
+          withdrawalEnabled: state.withdrawalEnabled,
+          baseWithdrawalRate: state.baseWithdrawalRate,
+          withdrawalSensitivity: state.withdrawalSensitivity,
         }));
       } catch (e) {
         console.warn('Failed to save state', e);
@@ -499,6 +542,9 @@
         if (data.rebalanceStrategy) state.rebalanceStrategy = data.rebalanceStrategy;
         if (data.rebalanceThreshold != null) state.rebalanceThreshold = data.rebalanceThreshold;
         if (data.simCount != null) state.simCount = data.simCount;
+        if (data.withdrawalEnabled != null) state.withdrawalEnabled = data.withdrawalEnabled;
+        if (data.baseWithdrawalRate != null) state.baseWithdrawalRate = data.baseWithdrawalRate;
+        if (data.withdrawalSensitivity != null) state.withdrawalSensitivity = data.withdrawalSensitivity;
       } catch (e) {
         console.warn('Failed to load state', e);
       }
@@ -517,8 +563,9 @@
     // =============================
     // 蒙特卡洛模拟核心
     // =============================
-    function simulateSinglePath(initialTotal, targetWeights, expectedReturns, volatilities, rebalanceType, rebalanceThreshold) {
+    function simulateSinglePath(initialTotal, targetWeights, expectedReturns, volatilities, rebalanceType, rebalanceThreshold, withdrawalEnabled, baseWithdrawalRate, withdrawalSensitivity) {
       const path = [initialTotal];
+      const withdrawals = [0]; // 第0年不提款
       const assetValues = {};
       
       // 初始化各资产价值
@@ -527,8 +574,60 @@
       }
 
       let rebalanceCount = 0;
+      let previousTotal = initialTotal;
+      let assetDepleted = false;
+
+      // 计算预期组合收益率（用于第一年的基准）
+      let expectedPortfolioReturn = 0;
+      for (const cls of ASSET_CLASSES) {
+        expectedPortfolioReturn += (targetWeights[cls.key] / 100) * (expectedReturns[cls.key] / 100);
+      }
 
       for (let year = 1; year <= YEARS; year++) {
+        let currentTotal = Object.values(assetValues).reduce((a, b) => a + b, 0);
+
+        // 年初提款逻辑
+        let withdrawal = 0;
+        if (withdrawalEnabled && !assetDepleted && currentTotal > 0) {
+          // 计算上一年实际收益率
+          const actualReturn = year === 1 
+            ? expectedPortfolioReturn  // 第一年使用预期收益率
+            : (currentTotal - previousTotal) / previousTotal;
+
+          // 计算动态调整系数
+          let adjustmentFactor = 1;
+          if (expectedPortfolioReturn > 0) {
+            const returnDeviation = (actualReturn - expectedPortfolioReturn) / expectedPortfolioReturn;
+            adjustmentFactor = 1 + withdrawalSensitivity * returnDeviation;
+            // 护栏：限制在 [0.5, 1.5] 之间
+            adjustmentFactor = Math.max(0.5, Math.min(1.5, adjustmentFactor));
+          }
+
+          // 计算提款金额
+          withdrawal = currentTotal * (baseWithdrawalRate / 100) * adjustmentFactor;
+          withdrawal = Math.max(0, withdrawal); // 确保不为负
+
+          // 从各资产按比例扣除提款
+          if (withdrawal > 0 && currentTotal > 0) {
+            for (const cls of ASSET_CLASSES) {
+              const withdrawalFromAsset = (assetValues[cls.key] / currentTotal) * withdrawal;
+              assetValues[cls.key] -= withdrawalFromAsset;
+              if (assetValues[cls.key] < 0) assetValues[cls.key] = 0;
+            }
+          }
+
+          // 重新计算提款后的总资产
+          currentTotal = Object.values(assetValues).reduce((a, b) => a + b, 0);
+          
+          // 检查资产是否耗尽
+          if (currentTotal <= 0) {
+            assetDepleted = true;
+          }
+        }
+
+        withdrawals.push(withdrawal);
+        previousTotal = currentTotal; // 记录提款后的金额，用于下一年计算收益率
+
         // 各资产按随机收益率增长
         for (const cls of ASSET_CLASSES) {
           const mu = expectedReturns[cls.key] / 100;
@@ -566,28 +665,35 @@
         path.push(total);
       }
 
-      return { path, rebalanceCount };
+      return { path, rebalanceCount, withdrawals, assetDepleted };
     }
 
     function runMonteCarloSimulation(simCount) {
       const normalizedWeights = normalizeAllocations(state.allocations);
       const paths = [];
       const rebalanceCounts = [];
+      const withdrawalPaths = [];
+      const depletionFlags = [];
 
       for (let i = 0; i < simCount; i++) {
-        const { path, rebalanceCount } = simulateSinglePath(
+        const { path, rebalanceCount, withdrawals, assetDepleted } = simulateSinglePath(
           state.initialAsset,
           normalizedWeights,
           state.returns,
           state.volatilities,
           state.rebalanceStrategy,
-          state.rebalanceThreshold
+          state.rebalanceThreshold,
+          state.withdrawalEnabled,
+          state.baseWithdrawalRate,
+          state.withdrawalSensitivity
         );
         paths.push(path);
         rebalanceCounts.push(rebalanceCount);
+        withdrawalPaths.push(withdrawals);
+        depletionFlags.push(assetDepleted);
       }
 
-      return { paths, rebalanceCounts };
+      return { paths, rebalanceCounts, withdrawalPaths, depletionFlags };
     }
 
     function computePercentiles(paths, percentiles) {
@@ -635,7 +741,41 @@
       return maxDD;
     }
 
-    function computeMetrics(paths, rebalanceCounts) {
+    function computeWithdrawalMetrics(withdrawalPaths, depletionFlags) {
+      if (!withdrawalPaths || withdrawalPaths.length === 0) {
+        return null;
+      }
+
+      // 计算提款金额的分位数
+      const withdrawalPercentiles = computePercentiles(withdrawalPaths, [25, 50, 75]);
+      
+      // 计算累计提款（中位数路径）
+      const medianWithdrawals = withdrawalPercentiles[50];
+      const totalWithdrawal = medianWithdrawals.reduce((sum, val) => sum + val, 0);
+      
+      // 计算平均年提款（排除第0年）
+      const avgAnnualWithdrawal = totalWithdrawal / YEARS;
+      
+      // 计算提款波动率（使用中位数路径的标准差）
+      const withdrawalsExcludingZero = medianWithdrawals.slice(1); // 排除第0年
+      const mean = withdrawalsExcludingZero.reduce((sum, val) => sum + val, 0) / withdrawalsExcludingZero.length;
+      const variance = withdrawalsExcludingZero.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / withdrawalsExcludingZero.length;
+      const withdrawalVolatility = Math.sqrt(variance);
+      
+      // 计算资产耗尽比例
+      const depletionCount = depletionFlags.filter(flag => flag).length;
+      const depletionRate = depletionCount / depletionFlags.length;
+      
+      return {
+        withdrawalPercentiles,
+        totalWithdrawal,
+        avgAnnualWithdrawal,
+        withdrawalVolatility,
+        depletionRate,
+      };
+    }
+
+    function computeMetrics(paths, rebalanceCounts, withdrawalPaths, depletionFlags) {
       const percentiles = computePercentiles(paths, [10, 25, 50, 75, 90]);
       const medianPath = percentiles[50];
       const initial = state.initialAsset;
@@ -655,6 +795,11 @@
       const successCount = paths.filter(p => p[p.length - 1] >= deterministicFinal).length;
       const successRate = successCount / paths.length;
 
+      // 计算提款指标
+      const withdrawalMetrics = state.withdrawalEnabled 
+        ? computeWithdrawalMetrics(withdrawalPaths, depletionFlags)
+        : null;
+
       return {
         percentiles,
         deterministicPath,
@@ -667,6 +812,7 @@
         maxDrawdown,
         avgRebalances,
         successRate,
+        withdrawalMetrics,
       };
     }
 
@@ -786,6 +932,17 @@
         { label: '最好情况（90%分位）', value: `¥${fmt(metrics.final90)}` },
         { label: '达到预期收益概率', value: fmtPct(metrics.successRate), class: metrics.successRate > 0.5 ? 'good' : 'warn' },
       ];
+
+      // 添加提款相关指标
+      if (state.withdrawalEnabled && metrics.withdrawalMetrics) {
+        const wm = metrics.withdrawalMetrics;
+        kpis.push(
+          { label: '累计总提款', value: `¥${fmt(wm.totalWithdrawal)}`, class: 'good' },
+          { label: '平均年提款', value: `¥${fmt(wm.avgAnnualWithdrawal)}` },
+          { label: '提款波动率', value: `¥${fmt(wm.withdrawalVolatility)}` },
+          { label: '资产耗尽风险', value: fmtPct(wm.depletionRate), class: wm.depletionRate > 0.1 ? 'warn' : 'good' }
+        );
+      }
       
       for (const kpi of kpis) {
         const box = document.createElement('div');
@@ -927,6 +1084,108 @@
       });
       
       dom('chartPanel').style.display = 'block';
+
+      // 渲染提款图表（如果启用）
+      if (state.withdrawalEnabled && metrics.withdrawalMetrics) {
+        renderWithdrawalChart(metrics.withdrawalMetrics);
+      } else {
+        dom('withdrawalChartPanel').style.display = 'none';
+      }
+    }
+
+    function renderWithdrawalChart(withdrawalMetrics) {
+      const ctx = dom('withdrawalChart').getContext('2d');
+      
+      if (withdrawalChartInstance) {
+        withdrawalChartInstance.destroy();
+      }
+      
+      const labels = Array.from({ length: YEARS + 1 }, (_, i) => i);
+      const medianWithdrawals = withdrawalMetrics.withdrawalPercentiles[50];
+      const p25Withdrawals = withdrawalMetrics.withdrawalPercentiles[25];
+      const p75Withdrawals = withdrawalMetrics.withdrawalPercentiles[75];
+      
+      // 计算误差条数据（从中位数到25%和75%分位）
+      const errorMinus = medianWithdrawals.map((val, i) => val - p25Withdrawals[i]);
+      const errorPlus = medianWithdrawals.map((val, i) => p75Withdrawals[i] - val);
+      
+      withdrawalChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '年度提款金额（中位数）',
+              data: medianWithdrawals,
+              backgroundColor: 'rgba(63, 185, 80, 0.7)',
+              borderColor: 'rgba(63, 185, 80, 1)',
+              borderWidth: 1,
+              errorBars: {
+                'withdrawal': {plus: errorPlus, minus: errorMinus},
+              },
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#93a1b1',
+                padding: 12,
+                font: { size: 12 },
+              },
+            },
+            tooltip: {
+              backgroundColor: 'rgba(20, 25, 37, 0.95)',
+              titleColor: '#e6edf3',
+              bodyColor: '#93a1b1',
+              borderColor: '#2d3748',
+              borderWidth: 1,
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  const idx = context.dataIndex;
+                  return [
+                    '中位数: ¥' + fmt(medianWithdrawals[idx]),
+                    '25%分位: ¥' + fmt(p25Withdrawals[idx]),
+                    '75%分位: ¥' + fmt(p75Withdrawals[idx])
+                  ];
+                }
+              }
+            },
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: '年份',
+                color: '#93a1b1',
+              },
+              ticks: { color: '#93a1b1' },
+              grid: { color: 'rgba(45, 55, 72, 0.5)' },
+            },
+            y: {
+              title: {
+                display: true,
+                text: '提款金额（人民币）',
+                color: '#93a1b1',
+              },
+              ticks: {
+                color: '#93a1b1',
+                callback: function(value) {
+                  return '¥' + fmt(value);
+                }
+              },
+              grid: { color: 'rgba(45, 55, 72, 0.5)' },
+            },
+          },
+        },
+      });
+      
+      dom('withdrawalChartPanel').style.display = 'block';
     }
 
     // =============================
@@ -944,8 +1203,8 @@
       
       try {
         const simCount = state.simCount;
-        const { paths, rebalanceCounts } = runMonteCarloSimulation(simCount);
-        const metrics = computeMetrics(paths, rebalanceCounts);
+        const { paths, rebalanceCounts, withdrawalPaths, depletionFlags } = runMonteCarloSimulation(simCount);
+        const metrics = computeMetrics(paths, rebalanceCounts, withdrawalPaths, depletionFlags);
         
         state.results = metrics;
         renderKPIs(metrics);
@@ -983,6 +1242,9 @@
           rebalanceStrategy: state.rebalanceStrategy,
           rebalanceThreshold: state.rebalanceThreshold,
           simCount: state.simCount,
+          withdrawalEnabled: state.withdrawalEnabled,
+          baseWithdrawalRate: state.baseWithdrawalRate,
+          withdrawalSensitivity: state.withdrawalSensitivity,
         };
         const json = JSON.stringify(config, null, 2);
         await navigator.clipboard.writeText(json);
@@ -1005,6 +1267,9 @@
         if (config.rebalanceStrategy) state.rebalanceStrategy = config.rebalanceStrategy;
         if (config.rebalanceThreshold != null) state.rebalanceThreshold = config.rebalanceThreshold;
         if (config.simCount != null) state.simCount = config.simCount;
+        if (config.withdrawalEnabled != null) state.withdrawalEnabled = config.withdrawalEnabled;
+        if (config.baseWithdrawalRate != null) state.baseWithdrawalRate = config.baseWithdrawalRate;
+        if (config.withdrawalSensitivity != null) state.withdrawalSensitivity = config.withdrawalSensitivity;
         
         initializeForm();
         saveState();
@@ -1020,12 +1285,18 @@
       dom('simCount').value = state.simCount;
       dom('rebalanceStrategy').value = state.rebalanceStrategy;
       dom('rebalanceThreshold').value = state.rebalanceThreshold;
+      dom('withdrawalEnabled').checked = state.withdrawalEnabled;
+      dom('baseWithdrawalRate').value = state.baseWithdrawalRate;
+      dom('withdrawalSensitivity').value = state.withdrawalSensitivity;
       
       renderAllocationControls();
       renderAssetParams();
       
       const thresholdInput = dom('thresholdInput');
       thresholdInput.style.display = state.rebalanceStrategy === 'threshold' ? 'flex' : 'none';
+      
+      const withdrawalControls = dom('withdrawalControls');
+      withdrawalControls.style.display = state.withdrawalEnabled ? 'block' : 'none';
     }
 
     // =============================
@@ -1054,6 +1325,22 @@
       
       dom('rebalanceThreshold').addEventListener('input', (e) => {
         state.rebalanceThreshold = parseFloat(e.target.value) || 10;
+        saveState();
+      });
+
+      dom('withdrawalEnabled').addEventListener('change', (e) => {
+        state.withdrawalEnabled = e.target.checked;
+        dom('withdrawalControls').style.display = e.target.checked ? 'block' : 'none';
+        saveState();
+      });
+
+      dom('baseWithdrawalRate').addEventListener('input', (e) => {
+        state.baseWithdrawalRate = parseFloat(e.target.value) || 4.0;
+        saveState();
+      });
+
+      dom('withdrawalSensitivity').addEventListener('input', (e) => {
+        state.withdrawalSensitivity = parseFloat(e.target.value) || 0.5;
         saveState();
       });
       
