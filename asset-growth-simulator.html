@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>资产配置模拟与预测</title>
+  <meta name="description" content="基于蒙特卡洛模拟的10年期资产配置预测工具，支持再平衡策略和风险分析" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #141925;
+      --text: #e6edf3;
+      --muted: #93a1b1;
+      --border: #2d3748;
+      --accent: #3fb950;
+      --accent-2: #4ea1ff;
+      --warn: #f85149;
+      --chip: #1f2635;
+      --input-bg: #0f1522;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Inter, Helvetica, Arial, PingFang SC, Noto Sans SC, "微软雅黑", sans-serif;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 28px auto 56px;
+      padding: 0 16px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      font-weight: 650;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      margin: 16px 0;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .grow { flex: 1 1 auto; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 960px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    .btn {
+      height: 36px;
+      padding: 0 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #182036;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .btn:hover {
+      background: #1f2842;
+      border-color: #3d4a5f;
+    }
+    .btn.accent {
+      background: #16331e;
+      border-color: #245c38;
+      color: #c9f7d0;
+    }
+    .btn.accent:hover {
+      background: #1a3d24;
+      border-color: #2d7043;
+    }
+    .btn.accent-2 {
+      background: #1a2f45;
+      border-color: #2d4a6f;
+      color: #b3d4ff;
+    }
+    .btn.warn {
+      background: #341a1a;
+      border-color: #5c2a2a;
+      color: #ffd7d4;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    input[type="text"],
+    input[type="number"],
+    select {
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--input-bg);
+      color: var(--text);
+      padding: 0 12px;
+      font-size: 14px;
+      width: 100%;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .chip {
+      background: var(--chip);
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .chip.info {
+      background: #1a2f45;
+      border-color: #2d4a6f;
+      color: #b3d4ff;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .kpi-box {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .kpi-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .kpi-value {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text);
+    }
+    .kpi-value.good { color: var(--accent); }
+    .kpi-value.warn { color: var(--warn); }
+    .asset-control {
+      margin: 12px 0;
+    }
+    .asset-control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .asset-label {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .asset-pct {
+      font-size: 14px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .muted { color: var(--muted); }
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .chart-container {
+      position: relative;
+      width: 100%;
+      height: 400px;
+      margin: 20px 0;
+    }
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(14, 17, 22, 0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .loading-overlay.active { display: flex; }
+    .loading-content {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 32px;
+      text-align: center;
+    }
+    .spinner {
+      border: 3px solid var(--border);
+      border-top: 3px solid var(--accent);
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .sep { height: 12px; }
+  </style>
+</head>
+<body>
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <div id="loadingText">正在模拟...</div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h1>资产配置模拟与预测工具</h1>
+    <div class="subtitle">
+      基于蒙特卡洛模拟展示10年期资产发展情况，考虑波动性和再平衡策略。
+      <span class="chip">仅供教育和规划用途，不构成投资建议</span>
+    </div>
+
+    <!-- 输入参数面板 -->
+    <div class="panel">
+      <h2>输入参数</h2>
+      <div class="row" style="margin-bottom: 16px;">
+        <div class="chip info">预设方案</div>
+        <button id="presetConservative" class="btn">保守型</button>
+        <button id="presetBalanced" class="btn accent">平衡型</button>
+        <button id="presetAggressive" class="btn warn">进取型</button>
+        <div class="grow"></div>
+        <button id="btnExport" class="btn">导出配置</button>
+        <button id="btnImport" class="btn">导入配置</button>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">初始总资产（人民币）</label>
+          <input type="number" id="initialAsset" min="0" step="10000" value="1000000" />
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">模拟次数</label>
+          <select id="simCount">
+            <option value="100">100次（快速）</option>
+            <option value="500">500次</option>
+            <option value="1000" selected>1000次（推荐）</option>
+            <option value="5000">5000次（精确）</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <h2>资产配置比例</h2>
+      <div id="allocationControls"></div>
+      <div class="note" style="margin-top: 8px;">配置比例总和将自动归一化到100%</div>
+
+      <div class="sep"></div>
+      <h2>资产参数</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>资产类别</th>
+            <th>预期年化收益率（%）</th>
+            <th>年化波动率（%）</th>
+            <th>参考最大回撤（%）</th>
+          </tr>
+        </thead>
+        <tbody id="assetParams"></tbody>
+      </table>
+
+      <div class="sep"></div>
+      <h2>再平衡策略</h2>
+      <div class="row">
+        <select id="rebalanceStrategy" style="width: 250px;">
+          <option value="none">不再平衡</option>
+          <option value="annual" selected>年度再平衡</option>
+          <option value="threshold">阈值再平衡</option>
+        </select>
+        <div id="thresholdInput" style="display: none;">
+          <label class="muted">偏离阈值：</label>
+          <input type="number" id="rebalanceThreshold" min="1" max="50" step="1" value="10" style="width: 80px;" />
+          <span class="muted">%</span>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <div class="row">
+        <button id="btnSimulate" class="btn accent" style="padding: 0 24px; height: 42px; font-size: 15px;">开始模拟</button>
+        <div class="grow"></div>
+        <div id="statusText" class="muted"></div>
+      </div>
+    </div>
+
+    <!-- 关键指标面板 -->
+    <div class="panel" id="kpiPanel" style="display: none;">
+      <h2>关键指标（基于中位数路径）</h2>
+      <div class="kpi-grid" id="kpiGrid"></div>
+    </div>
+
+    <!-- 图表面板 -->
+    <div class="panel" id="chartPanel" style="display: none;">
+      <h2>资产发展模拟（10年期）</h2>
+      <div class="chart-container">
+        <canvas id="mainChart"></canvas>
+      </div>
+      <div class="note">
+        说明：中位数线代表50%概率情况；阴影区域为25%-75%置信区间；虚线为确定性模拟（无波动）参考线。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =============================
+    // 配置与常量
+    // =============================
+    const YEARS = 10;
+    const ASSET_CLASSES = [
+      { key: 'cash', name: '现金', color: '#6e7681' },
+      { key: 'bonds', name: '债券', color: '#4ea1ff' },
+      { key: 'equity', name: '股票', color: '#f85149' },
+      { key: 'crypto', name: '加密货币', color: '#d29922' },
+    ];
+
+    const PRESETS = {
+      conservative: {
+        allocations: { cash: 40, bonds: 30, equity: 25, crypto: 5 },
+        returns: { cash: 2, bonds: 3, equity: 6, crypto: 15 },
+        volatilities: { cash: 0, bonds: 5, equity: 18, crypto: 80 },
+      },
+      balanced: {
+        allocations: { cash: 10, bonds: 30, equity: 50, crypto: 10 },
+        returns: { cash: 2, bonds: 4, equity: 8, crypto: 25 },
+        volatilities: { cash: 0, bonds: 5, equity: 18, crypto: 80 },
+      },
+      aggressive: {
+        allocations: { cash: 5, bonds: 15, equity: 40, crypto: 40 },
+        returns: { cash: 2, bonds: 4, equity: 9, crypto: 35 },
+        volatilities: { cash: 0, bonds: 5, equity: 18, crypto: 80 },
+      },
+    };
+
+    const MAX_DRAWDOWNS = { cash: 0, bonds: 20, equity: 55, crypto: 80 };
+
+    const LS_KEY = 'asset-growth-simulator.v1';
+
+    // =============================
+    // 状态管理
+    // =============================
+    const state = {
+      initialAsset: 1000000,
+      allocations: { cash: 10, bonds: 30, equity: 50, crypto: 10 },
+      returns: { cash: 2, bonds: 4, equity: 8, crypto: 25 },
+      volatilities: { cash: 0, bonds: 5, equity: 18, crypto: 80 },
+      rebalanceStrategy: 'annual',
+      rebalanceThreshold: 10,
+      simCount: 1000,
+      results: null,
+    };
+
+    let chartInstance = null;
+
+    // =============================
+    // 工具函数
+    // =============================
+    const dom = (id) => document.getElementById(id);
+    const fmt = (n, digits = 0) => isFinite(n) ? n.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '-';
+    const fmtPct = (n, digits = 2) => isFinite(n) ? (n * 100).toFixed(digits) + '%' : '-';
+
+    function normalizeAllocations(alloc) {
+      const sum = Object.values(alloc).reduce((a, b) => a + b, 0);
+      if (sum === 0) return alloc;
+      const normalized = {};
+      for (const key in alloc) normalized[key] = (alloc[key] / sum) * 100;
+      return normalized;
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          initialAsset: state.initialAsset,
+          allocations: state.allocations,
+          returns: state.returns,
+          volatilities: state.volatilities,
+          rebalanceStrategy: state.rebalanceStrategy,
+          rebalanceThreshold: state.rebalanceThreshold,
+          simCount: state.simCount,
+        }));
+      } catch (e) {
+        console.warn('Failed to save state', e);
+      }
+    }
+
+    function loadState() {
+      try {
+        const saved = localStorage.getItem(LS_KEY);
+        if (!saved) return;
+        const data = JSON.parse(saved);
+        if (data.initialAsset != null) state.initialAsset = data.initialAsset;
+        if (data.allocations) state.allocations = data.allocations;
+        if (data.returns) state.returns = data.returns;
+        if (data.volatilities) state.volatilities = data.volatilities;
+        if (data.rebalanceStrategy) state.rebalanceStrategy = data.rebalanceStrategy;
+        if (data.rebalanceThreshold != null) state.rebalanceThreshold = data.rebalanceThreshold;
+        if (data.simCount != null) state.simCount = data.simCount;
+      } catch (e) {
+        console.warn('Failed to load state', e);
+      }
+    }
+
+    // =============================
+    // 正态分布随机数生成（Box-Muller变换）
+    // =============================
+    function randn() {
+      let u = 0, v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    // =============================
+    // 蒙特卡洛模拟核心
+    // =============================
+    function simulateSinglePath(initialTotal, targetWeights, expectedReturns, volatilities, rebalanceType, rebalanceThreshold) {
+      const path = [initialTotal];
+      const assetValues = {};
+      
+      // 初始化各资产价值
+      for (const cls of ASSET_CLASSES) {
+        assetValues[cls.key] = initialTotal * (targetWeights[cls.key] / 100);
+      }
+
+      let rebalanceCount = 0;
+
+      for (let year = 1; year <= YEARS; year++) {
+        // 各资产按随机收益率增长
+        for (const cls of ASSET_CLASSES) {
+          const mu = expectedReturns[cls.key] / 100;
+          const sigma = volatilities[cls.key] / 100;
+          const randomReturn = mu + sigma * randn();
+          assetValues[cls.key] *= (1 + randomReturn);
+          // 防止负值
+          if (assetValues[cls.key] < 0) assetValues[cls.key] = 0;
+        }
+
+        const total = Object.values(assetValues).reduce((a, b) => a + b, 0);
+
+        // 再平衡逻辑
+        let shouldRebalance = false;
+        if (rebalanceType === 'annual') {
+          shouldRebalance = true;
+        } else if (rebalanceType === 'threshold' && total > 0) {
+          for (const cls of ASSET_CLASSES) {
+            const currentWeight = (assetValues[cls.key] / total) * 100;
+            const targetWeight = targetWeights[cls.key];
+            if (Math.abs(currentWeight - targetWeight) > rebalanceThreshold) {
+              shouldRebalance = true;
+              break;
+            }
+          }
+        }
+
+        if (shouldRebalance && total > 0) {
+          rebalanceCount++;
+          for (const cls of ASSET_CLASSES) {
+            assetValues[cls.key] = total * (targetWeights[cls.key] / 100);
+          }
+        }
+
+        path.push(total);
+      }
+
+      return { path, rebalanceCount };
+    }
+
+    function runMonteCarloSimulation(simCount) {
+      const normalizedWeights = normalizeAllocations(state.allocations);
+      const paths = [];
+      const rebalanceCounts = [];
+
+      for (let i = 0; i < simCount; i++) {
+        const { path, rebalanceCount } = simulateSinglePath(
+          state.initialAsset,
+          normalizedWeights,
+          state.returns,
+          state.volatilities,
+          state.rebalanceStrategy,
+          state.rebalanceThreshold
+        );
+        paths.push(path);
+        rebalanceCounts.push(rebalanceCount);
+      }
+
+      return { paths, rebalanceCounts };
+    }
+
+    function computePercentiles(paths, percentiles) {
+      const numYears = paths[0].length;
+      const result = {};
+      for (const p of percentiles) result[p] = [];
+
+      for (let year = 0; year < numYears; year++) {
+        const values = paths.map(path => path[year]).sort((a, b) => a - b);
+        for (const p of percentiles) {
+          const index = Math.floor((values.length - 1) * (p / 100));
+          result[p].push(values[index]);
+        }
+      }
+
+      return result;
+    }
+
+    function computeDeterministicPath(initialTotal, targetWeights, expectedReturns) {
+      const path = [initialTotal];
+      let total = initialTotal;
+      
+      for (let year = 1; year <= YEARS; year++) {
+        let newTotal = 0;
+        for (const cls of ASSET_CLASSES) {
+          const weight = targetWeights[cls.key] / 100;
+          const returnRate = expectedReturns[cls.key] / 100;
+          newTotal += total * weight * (1 + returnRate);
+        }
+        total = newTotal;
+        path.push(total);
+      }
+      
+      return path;
+    }
+
+    function computeMaxDrawdown(path) {
+      let maxDD = 0;
+      let peak = path[0];
+      for (const val of path) {
+        if (val > peak) peak = val;
+        const dd = (peak - val) / peak;
+        if (dd > maxDD) maxDD = dd;
+      }
+      return maxDD;
+    }
+
+    function computeMetrics(paths, rebalanceCounts) {
+      const percentiles = computePercentiles(paths, [10, 25, 50, 75, 90]);
+      const medianPath = percentiles[50];
+      const initial = state.initialAsset;
+      const finalMedian = medianPath[medianPath.length - 1];
+      const cumulativeReturn = (finalMedian - initial) / initial;
+      const annualizedReturn = Math.pow(finalMedian / initial, 1 / YEARS) - 1;
+      const maxDrawdown = computeMaxDrawdown(medianPath);
+      const avgRebalances = rebalanceCounts.reduce((a, b) => a + b, 0) / rebalanceCounts.length;
+
+      const normalizedWeights = normalizeAllocations(state.allocations);
+      const deterministicPath = computeDeterministicPath(initial, normalizedWeights, state.returns);
+      const deterministicFinal = deterministicPath[deterministicPath.length - 1];
+      const successCount = paths.filter(p => p[p.length - 1] >= deterministicFinal).length;
+      const successRate = successCount / paths.length;
+
+      return {
+        percentiles,
+        deterministicPath,
+        initial,
+        finalMedian,
+        final10: percentiles[10][percentiles[10].length - 1],
+        final90: percentiles[90][percentiles[90].length - 1],
+        cumulativeReturn,
+        annualizedReturn,
+        maxDrawdown,
+        avgRebalances,
+        successRate,
+      };
+    }
+
+    // =============================
+    // UI渲染
+    // =============================
+    function renderAllocationControls() {
+      const container = dom('allocationControls');
+      container.innerHTML = '';
+      
+      for (const cls of ASSET_CLASSES) {
+        const value = state.allocations[cls.key] || 0;
+        const div = document.createElement('div');
+        div.className = 'asset-control';
+        div.innerHTML = `
+          <div class="asset-control-header">
+            <span class="asset-label">${cls.name}</span>
+            <span class="asset-pct" id="pct-${cls.key}">${value.toFixed(1)}%</span>
+          </div>
+          <input type="range" id="alloc-${cls.key}" min="0" max="100" step="0.5" value="${value}" />
+        `;
+        container.appendChild(div);
+        
+        const slider = dom(`alloc-${cls.key}`);
+        slider.addEventListener('input', (e) => {
+          state.allocations[cls.key] = parseFloat(e.target.value);
+          updateAllocationDisplay();
+          saveState();
+        });
+      }
+    }
+
+    function updateAllocationDisplay() {
+      for (const cls of ASSET_CLASSES) {
+        dom(`pct-${cls.key}`).textContent = state.allocations[cls.key].toFixed(1) + '%';
+      }
+    }
+
+    function renderAssetParams() {
+      const tbody = dom('assetParams');
+      tbody.innerHTML = '';
+      
+      for (const cls of ASSET_CLASSES) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="font-weight: 600;">${cls.name}</td>
+          <td><input type="number" id="ret-${cls.key}" step="0.1" min="-50" max="100" value="${state.returns[cls.key]}" style="width: 100px;" /></td>
+          <td><input type="number" id="vol-${cls.key}" step="0.1" min="0" max="200" value="${state.volatilities[cls.key]}" style="width: 100px;" /></td>
+          <td><span class="muted">${MAX_DRAWDOWNS[cls.key]}%</span></td>
+        `;
+        tbody.appendChild(tr);
+        
+        dom(`ret-${cls.key}`).addEventListener('input', (e) => {
+          state.returns[cls.key] = parseFloat(e.target.value) || 0;
+          saveState();
+        });
+        
+        dom(`vol-${cls.key}`).addEventListener('input', (e) => {
+          state.volatilities[cls.key] = parseFloat(e.target.value) || 0;
+          saveState();
+        });
+      }
+    }
+
+    function renderKPIs(metrics) {
+      const container = dom('kpiGrid');
+      container.innerHTML = '';
+      
+      const kpis = [
+        { label: '初始资产', value: `¥${fmt(metrics.initial)}` },
+        { label: '最终资产（中位数）', value: `¥${fmt(metrics.finalMedian)}`, class: 'good' },
+        { label: '累计收益率', value: fmtPct(metrics.cumulativeReturn), class: metrics.cumulativeReturn > 0 ? 'good' : 'warn' },
+        { label: '年化收益率', value: fmtPct(metrics.annualizedReturn), class: metrics.annualizedReturn > 0 ? 'good' : 'warn' },
+        { label: '最大回撤（中位数路径）', value: fmtPct(metrics.maxDrawdown), class: 'warn' },
+        { label: '平均再平衡次数', value: fmt(metrics.avgRebalances, 1) },
+        { label: '最坏情况（10%分位）', value: `¥${fmt(metrics.final10)}` },
+        { label: '最好情况（90%分位）', value: `¥${fmt(metrics.final90)}` },
+        { label: '达到预期收益概率', value: fmtPct(metrics.successRate), class: metrics.successRate > 0.5 ? 'good' : 'warn' },
+      ];
+      
+      for (const kpi of kpis) {
+        const box = document.createElement('div');
+        box.className = 'kpi-box';
+        box.innerHTML = `
+          <div class="kpi-label">${kpi.label}</div>
+          <div class="kpi-value ${kpi.class || ''}">${kpi.value}</div>
+        `;
+        container.appendChild(box);
+      }
+      
+      dom('kpiPanel').style.display = 'block';
+    }
+
+    function renderChart(metrics) {
+      const ctx = dom('mainChart').getContext('2d');
+      
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+      
+      const labels = Array.from({ length: YEARS + 1 }, (_, i) => i);
+      
+      const datasets = [
+        {
+          label: '90%分位（乐观）',
+          data: metrics.percentiles[90],
+          borderColor: 'rgba(62, 161, 255, 0.3)',
+          borderWidth: 1,
+          borderDash: [5, 5],
+          fill: false,
+          pointRadius: 0,
+        },
+        {
+          label: '75%分位',
+          data: metrics.percentiles[75],
+          borderColor: 'rgba(62, 161, 255, 0.5)',
+          borderWidth: 1.5,
+          fill: '+1',
+          backgroundColor: 'rgba(62, 161, 255, 0.1)',
+          pointRadius: 0,
+        },
+        {
+          label: '50%分位（中位数）',
+          data: metrics.percentiles[50],
+          borderColor: 'rgba(63, 185, 80, 1)',
+          borderWidth: 3,
+          fill: false,
+          pointRadius: 3,
+        },
+        {
+          label: '25%分位',
+          data: metrics.percentiles[25],
+          borderColor: 'rgba(62, 161, 255, 0.5)',
+          borderWidth: 1.5,
+          fill: false,
+          pointRadius: 0,
+        },
+        {
+          label: '10%分位（悲观）',
+          data: metrics.percentiles[10],
+          borderColor: 'rgba(248, 81, 73, 0.3)',
+          borderWidth: 1,
+          borderDash: [5, 5],
+          fill: false,
+          pointRadius: 0,
+        },
+        {
+          label: '确定性模拟（无波动）',
+          data: metrics.deterministicPath,
+          borderColor: 'rgba(147, 161, 177, 0.5)',
+          borderWidth: 2,
+          borderDash: [10, 5],
+          fill: false,
+          pointRadius: 0,
+        },
+      ];
+      
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#93a1b1',
+                padding: 12,
+                font: { size: 12 },
+              },
+            },
+            tooltip: {
+              backgroundColor: 'rgba(20, 25, 37, 0.95)',
+              titleColor: '#e6edf3',
+              bodyColor: '#93a1b1',
+              borderColor: '#2d3748',
+              borderWidth: 1,
+              padding: 12,
+              displayColors: true,
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ¥' + fmt(context.parsed.y);
+                }
+              }
+            },
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: '年份',
+                color: '#93a1b1',
+              },
+              ticks: { color: '#93a1b1' },
+              grid: { color: 'rgba(45, 55, 72, 0.5)' },
+            },
+            y: {
+              title: {
+                display: true,
+                text: '资产总额（人民币）',
+                color: '#93a1b1',
+              },
+              ticks: {
+                color: '#93a1b1',
+                callback: function(value) {
+                  return '¥' + fmt(value);
+                }
+              },
+              grid: { color: 'rgba(45, 55, 72, 0.5)' },
+            },
+          },
+        },
+      });
+      
+      dom('chartPanel').style.display = 'block';
+    }
+
+    // =============================
+    // 事件处理
+    // =============================
+    async function runSimulation() {
+      const loadingOverlay = dom('loadingOverlay');
+      const loadingText = dom('loadingText');
+      
+      loadingOverlay.classList.add('active');
+      loadingText.textContent = '正在模拟...';
+      
+      // 让UI有机会更新
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      try {
+        const simCount = state.simCount;
+        const { paths, rebalanceCounts } = runMonteCarloSimulation(simCount);
+        const metrics = computeMetrics(paths, rebalanceCounts);
+        
+        state.results = metrics;
+        renderKPIs(metrics);
+        renderChart(metrics);
+        
+        dom('statusText').textContent = `模拟完成（${simCount}次）`;
+      } catch (error) {
+        console.error('Simulation error:', error);
+        dom('statusText').textContent = '模拟失败：' + error.message;
+      } finally {
+        loadingOverlay.classList.remove('active');
+      }
+    }
+
+    function applyPreset(presetName) {
+      const preset = PRESETS[presetName];
+      if (!preset) return;
+      
+      state.allocations = { ...preset.allocations };
+      state.returns = { ...preset.returns };
+      state.volatilities = { ...preset.volatilities };
+      
+      renderAllocationControls();
+      renderAssetParams();
+      saveState();
+    }
+
+    async function exportConfig() {
+      try {
+        const config = {
+          initialAsset: state.initialAsset,
+          allocations: state.allocations,
+          returns: state.returns,
+          volatilities: state.volatilities,
+          rebalanceStrategy: state.rebalanceStrategy,
+          rebalanceThreshold: state.rebalanceThreshold,
+          simCount: state.simCount,
+        };
+        const json = JSON.stringify(config, null, 2);
+        await navigator.clipboard.writeText(json);
+        alert('配置已复制到剪贴板');
+      } catch (error) {
+        console.error('Export failed:', error);
+        alert('导出失败：' + error.message);
+      }
+    }
+
+    async function importConfig() {
+      try {
+        const json = await navigator.clipboard.readText();
+        const config = JSON.parse(json);
+        
+        if (config.initialAsset != null) state.initialAsset = config.initialAsset;
+        if (config.allocations) state.allocations = config.allocations;
+        if (config.returns) state.returns = config.returns;
+        if (config.volatilities) state.volatilities = config.volatilities;
+        if (config.rebalanceStrategy) state.rebalanceStrategy = config.rebalanceStrategy;
+        if (config.rebalanceThreshold != null) state.rebalanceThreshold = config.rebalanceThreshold;
+        if (config.simCount != null) state.simCount = config.simCount;
+        
+        initializeForm();
+        saveState();
+        alert('配置导入成功');
+      } catch (error) {
+        console.error('Import failed:', error);
+        alert('导入失败：' + error.message);
+      }
+    }
+
+    function initializeForm() {
+      dom('initialAsset').value = state.initialAsset;
+      dom('simCount').value = state.simCount;
+      dom('rebalanceStrategy').value = state.rebalanceStrategy;
+      dom('rebalanceThreshold').value = state.rebalanceThreshold;
+      
+      renderAllocationControls();
+      renderAssetParams();
+      
+      const thresholdInput = dom('thresholdInput');
+      thresholdInput.style.display = state.rebalanceStrategy === 'threshold' ? 'flex' : 'none';
+    }
+
+    // =============================
+    // 初始化
+    // =============================
+    function init() {
+      loadState();
+      initializeForm();
+      
+      // 事件绑定
+      dom('initialAsset').addEventListener('input', (e) => {
+        state.initialAsset = parseFloat(e.target.value) || 0;
+        saveState();
+      });
+      
+      dom('simCount').addEventListener('change', (e) => {
+        state.simCount = parseInt(e.target.value) || 1000;
+        saveState();
+      });
+      
+      dom('rebalanceStrategy').addEventListener('change', (e) => {
+        state.rebalanceStrategy = e.target.value;
+        dom('thresholdInput').style.display = e.target.value === 'threshold' ? 'flex' : 'none';
+        saveState();
+      });
+      
+      dom('rebalanceThreshold').addEventListener('input', (e) => {
+        state.rebalanceThreshold = parseFloat(e.target.value) || 10;
+        saveState();
+      });
+      
+      dom('btnSimulate').addEventListener('click', runSimulation);
+      dom('presetConservative').addEventListener('click', () => applyPreset('conservative'));
+      dom('presetBalanced').addEventListener('click', () => applyPreset('balanced'));
+      dom('presetAggressive').addEventListener('click', () => applyPreset('aggressive'));
+      dom('btnExport').addEventListener('click', exportConfig);
+      dom('btnImport').addEventListener('click', importConfig);
+    }
+
+    // 启动
+    init();
+  </script>
+</body>
+</html>
+
