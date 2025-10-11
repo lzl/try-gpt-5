@@ -178,7 +178,7 @@
         <div class="card">
           <h2>持仓输入</h2>
           <div class="row small muted" style="margin-bottom: 6px;">
-            <div>可新增 coin（默认价格使用 SYMBOLUSDT）。现金 coin 自动识别 USDT/USDC。</div>
+            <div>可新增 coin（默认价格使用 SYMBOLUSDT）。现金 coin 自动识别 USDT/USDC/PAXG。</div>
           </div>
           <table>
             <thead>
@@ -270,6 +270,18 @@
             </thead>
             <tbody id="nonCashBreakdown"></tbody>
           </table>
+
+          <h2 style="margin-top: 14px;">当前现金仓位</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Coin</th>
+                <th>现值 (USD)</th>
+                <th>在现金中占比</th>
+              </tr>
+            </thead>
+            <tbody id="cashBreakdown"></tbody>
+          </table>
         </div>
       </div>
 
@@ -319,7 +331,7 @@
       // =============================
       // Utilities & Constants
       // =============================
-      const CASH_COINS = new Set(["USDT", "USDC"]);
+      const CASH_COINS = new Set(["USDT", "USDC", "PAXG"]);
       const DEFAULT_ROWS = [
         { symbol: "BTC", amount: 0 },
         { symbol: "ETH", amount: 0 },
@@ -712,6 +724,22 @@
         }
       }
 
+      function renderCashBreakdown(per, totalCashUsd) {
+        const tbody = dom('cashBreakdown');
+        tbody.innerHTML = '';
+        const cash = per.filter(x => x.isCash);
+        for (const x of cash) {
+          const share = totalCashUsd > 0 ? x.value / totalCashUsd : 0;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${x.symbol}</td>
+            <td class="mono">${fmt2(x.value)}</td>
+            <td>${pct(share)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
       function renderKpis(totalUsd, usdCny, totalCashUsd, totalNonCashUsd, btcPriceForConversion) {
         // Row 1: Total assets (USD/CNY)
         dom('totalUsd').textContent = isFinite(totalUsd) ? `$${fmt0(totalUsd)}` : '—';
@@ -909,6 +937,7 @@
         const { per, totalUsd, totalCashUsd, totalNonCashUsd, btcPriceForConversion } = computeAggregates();
         renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd, btcPriceForConversion);
         renderNonCashBreakdown(per, totalNonCashUsd);
+        renderCashBreakdown(per, totalCashUsd);
         await recomputeAndRenderPlan(per, totalUsd);
       }
 
@@ -938,6 +967,7 @@
         const { per, totalUsd, totalCashUsd, totalNonCashUsd, btcPriceForConversion } = computeAggregates();
         renderKpis(totalUsd, state.usdCny || NaN, totalCashUsd, totalNonCashUsd, btcPriceForConversion);
         renderNonCashBreakdown(per, totalNonCashUsd);
+        renderCashBreakdown(per, totalCashUsd);
 
         // Plan
         await recomputeAndRenderPlan(per, totalUsd);
